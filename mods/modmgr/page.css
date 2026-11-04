@@ -1,0 +1,695 @@
+/* Mods page. Every value traces to the app's own CSS variables through the same token set as the other settings pages: the settings surface (rounded-xl = --radius-xl, border-border/60, bg-card/40, --font-sans).
+   The system colours after each app variable are fallbacks only, so the overlay stays opaque and legible if the app
+   renames a variable. */
+
+.mm-root {
+  --mm-bg: var(--background, Canvas);
+  --mm-fg: var(--foreground, CanvasText);
+  --mm-muted: var(--muted-foreground, GrayText);
+  --mm-line: var(--border, GrayText);
+  --mm-surface: color-mix(in oklab, var(--card, Canvas) 40%, transparent);
+  --mm-surface-line: color-mix(in oklab, var(--mm-line) 60%, transparent);
+  --mm-raised: var(--popover, Canvas);
+  --mm-raised-fg: var(--popover-foreground, CanvasText);
+  --mm-wash: var(--accent, color-mix(in oklab, CanvasText 6%, transparent));
+  /* Pressed: one step past the hover wash, toward the text colour (darker in light, lighter in dark). */
+  --mm-press: color-mix(in oklab, var(--mm-fg) 12%, var(--mm-wash));
+  --mm-primary: var(--primary, AccentColor);
+  --mm-primary-fg: var(--primary-foreground, AccentColorText);
+  --mm-ring: var(--ring, Highlight);
+  --mm-ok: var(--success, CanvasText);
+  --mm-warn: var(--warning, CanvasText);
+  --mm-danger: var(--destructive, CanvasText);
+  /* Status inks: the status colour pulled toward the text colour, so it passes AA as text in both themes. */
+  --mm-ok-ink: color-mix(in oklab, var(--mm-ok) 55%, var(--mm-fg));
+  --mm-warn-ink: color-mix(in oklab, var(--mm-warn) 70%, var(--mm-fg));
+  --mm-danger-ink: color-mix(in oklab, var(--mm-danger) 72%, var(--mm-fg));
+  --mm-radius: var(--radius-xl, 14px);
+  --mm-radius-control: var(--control-radius, .5rem);
+  --mm-space: var(--spacing, .25rem);
+  --mm-text-xs: var(--text-xs, .75rem);
+  --mm-text-sm: var(--text-sm, .875rem);
+  --mm-text-base: var(--text-base, 1rem);
+  --mm-medium: var(--font-weight-medium, 500);
+  --mm-semibold: var(--font-weight-semibold, 600);
+  --mm-topbar: var(--workspace-topbar-height, 52px);
+  --mm-dur: var(--duration-basic, .15s);
+  --mm-ease: var(--ease-standard, ease);
+  --mm-target: calc(var(--mm-space) * 8);
+  --mm-fs-small: var(--mm-text-xs);
+  --mm-fs-title: var(--mm-text-base);
+  /* The app's panel shadow: black-based in both themes, so it never glows in dark. */
+  --mm-shadow: var(--shadow-panel, 0 0 0 .5px rgb(0 0 0 / .06), 0 8px 24px rgb(0 0 0 / .09));
+  /* Switch: a 36 x 20 track with a 1 px edge and a 16 px thumb that travels 16 px. */
+  --mm-track-w: calc(var(--mm-space) * 9);
+  --mm-track-h: calc(var(--mm-space) * 5);
+  --mm-thumb: calc(var(--mm-space) * 4);
+  position: fixed;
+  /* One above the 프로필 page (30), so 모드 shows over a 프로필 page that is still open behind it. */
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--mm-bg);
+  color: var(--mm-fg);
+  font-family: var(--font-sans, inherit);
+  font-size: var(--mm-text-sm);
+  line-height: 1.5;
+  word-break: keep-all;
+}
+
+.mm-root:not([data-open]),
+.mm-root[hidden] {
+  display: none;
+}
+
+.mm-root *,
+.mm-root *::before,
+.mm-root *::after {
+  box-sizing: border-box;
+}
+
+/* Text: Korean words wrap whole (keep-all on the root), paragraphs avoid a short last line, titles balance. */
+.mm-root p,
+.mm-root td,
+.mm-root th {
+  text-wrap: pretty;
+}
+
+.mm-root h1,
+.mm-root h2 {
+  text-wrap: balance;
+}
+
+/* Touch or narrow: 44 px targets and the app's base text size (the app switches text-base/sm at 640 px). */
+@media (pointer: coarse), (max-width: 639px) {
+  .mm-root {
+    --mm-target: calc(var(--mm-space) * 11);
+    font-size: var(--mm-text-base);
+  }
+}
+
+/* Phone width: body 17 px, secondary text 15 px and titles 18 px (the iOS body and subheadline sizes). */
+@media (max-width: 639px) {
+  .mm-root {
+    --mm-fs-small: .9375rem;
+    --mm-fs-title: var(--mm-text-lg, 1.125rem);
+    font-size: 1.0625rem;
+  }
+}
+
+.mm-icon {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+}
+
+.mm-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.mm-root :focus-visible {
+  outline: 2px solid var(--mm-ring);
+  outline-offset: 2px;
+}
+
+.mm-root [tabindex="-1"]:focus-visible {
+  outline: none;
+}
+
+/* Page frame: a top bar the height of the app's workspace top bar, then the one scroller. */
+.mm-page {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  outline: none;
+}
+
+.mm-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: calc(var(--mm-space) * 1);
+  height: var(--mm-topbar);
+  padding: 0 calc(var(--mm-space) * 3);
+}
+
+.mm-crumb {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--mm-target);
+  padding: 0 calc(var(--mm-space) * 2);
+  border: 0;
+  border-radius: var(--mm-radius-control);
+  background: transparent;
+  color: var(--mm-muted);
+  font: inherit;
+  font-weight: var(--mm-medium);
+  cursor: pointer;
+  transition: background-color var(--mm-dur) var(--mm-ease), color var(--mm-dur) var(--mm-ease);
+}
+
+.mm-crumb:hover {
+  background: var(--mm-wash);
+  color: var(--mm-fg);
+}
+
+.mm-crumb:active {
+  background: var(--mm-press);
+  color: var(--mm-fg);
+}
+
+.mm-sep {
+  color: var(--mm-muted);
+}
+
+.mm-title {
+  margin: 0 0 0 calc(var(--mm-space) * 1);
+  font-size: inherit;
+  font-weight: var(--mm-medium);
+}
+
+/* No scrollbar strip: the gutter would sit on the right only and make the side margins uneven. The page still
+   scrolls by wheel, touch and keys. */
+.mm-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.mm-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.mm-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mm-space) * 5);
+  width: 100%;
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: calc(var(--mm-space) * 6) calc(var(--mm-space) * 5) calc(var(--mm-space) * 12);
+}
+
+@media (min-width: 640px) {
+  .mm-body {
+    padding-inline: calc(var(--mm-space) * 6);
+  }
+}
+
+/* Mod cards: one per row, the settings surface look; name and status on the first line, the description under them,
+   the switch at the trailing end. */
+.mm-list {
+  display: grid;
+  gap: calc(var(--mm-space) * 3);
+}
+
+.mm-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: calc(var(--mm-space) * 2) calc(var(--mm-space) * 4);
+  align-items: center;
+  min-width: 0;
+  padding: calc(var(--mm-space) * 4);
+  border: 1px solid var(--mm-surface-line);
+  border-radius: var(--mm-radius);
+  background: var(--mm-surface);
+}
+
+.mm-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mm-space) * 1);
+  min-width: 0;
+}
+
+.mm-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--mm-space) * .5) calc(var(--mm-space) * 2);
+  min-width: 0;
+}
+
+.mm-name {
+  margin: 0;
+  font-size: var(--mm-fs-title);
+  font-weight: var(--mm-semibold);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+/* Status as a short bracketed tag in its status ink. The brackets are drawn by CSS with empty alternative text, so
+   the text and the accessible name are the status alone. */
+.mm-chip {
+  font-weight: var(--mm-medium);
+  overflow-wrap: anywhere;
+}
+
+.mm-chip::before {
+  content: '[';
+  content: '[' / '';
+}
+
+.mm-chip::after {
+  content: ']';
+  content: ']' / '';
+}
+
+.mm-chip[data-tone="ok"] {
+  color: var(--mm-ok-ink);
+}
+
+.mm-chip[data-tone="warn"] {
+  color: var(--mm-warn-ink);
+}
+
+.mm-chip[data-tone="danger"] {
+  color: var(--mm-danger-ink);
+}
+
+.mm-chip[data-tone="off"] {
+  color: var(--mm-muted);
+}
+
+.mm-desc {
+  margin: 0;
+  color: var(--mm-muted);
+  overflow-wrap: anywhere;
+}
+
+.mm-card-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* Switch: off is an outlined track with a muted thumb on the left, on a filled track with the thumb on the right, so
+   the two states differ by position and fill, not by colour alone. The hit area is the button around the track. */
+.mm-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--mm-target);
+  min-height: var(--mm-target);
+  padding: 0 calc(var(--mm-space) * 1);
+  border: 0;
+  border-radius: var(--mm-radius-control);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.mm-track {
+  display: flex;
+  align-items: center;
+  width: var(--mm-track-w);
+  height: var(--mm-track-h);
+  padding: 1px;
+  border: 1px solid var(--mm-muted);
+  border-radius: calc(var(--mm-track-h) / 2);
+  background: transparent;
+  transition: background-color var(--mm-dur) var(--mm-ease), border-color var(--mm-dur) var(--mm-ease);
+}
+
+.mm-thumb {
+  width: var(--mm-thumb);
+  height: var(--mm-thumb);
+  border-radius: 50%;
+  background: var(--mm-muted);
+  transition: transform var(--mm-dur) var(--mm-ease), background-color var(--mm-dur) var(--mm-ease);
+}
+
+.mm-switch[aria-checked="true"] .mm-track {
+  border-color: var(--mm-primary);
+  background: var(--mm-primary);
+}
+
+.mm-switch[aria-checked="true"] .mm-thumb {
+  background: var(--mm-primary-fg);
+  transform: translateX(calc(var(--mm-track-w) - var(--mm-track-h)));
+}
+
+.mm-switch:hover:not([aria-disabled="true"]) .mm-track {
+  background: var(--mm-wash);
+}
+
+.mm-switch:active:not([aria-disabled="true"]) .mm-track {
+  background: var(--mm-press);
+}
+
+.mm-switch[aria-checked="true"]:hover:not([aria-disabled="true"]) .mm-track {
+  background: color-mix(in oklab, var(--mm-primary) 86%, var(--mm-fg));
+}
+
+.mm-switch[aria-checked="true"]:active:not([aria-disabled="true"]) .mm-track {
+  background: color-mix(in oklab, var(--mm-primary) 72%, var(--mm-fg));
+}
+
+/* While one switch writes, every switch waits. The track keeps its full-contrast edge (3:1 or more against the card in
+   both states and themes); the unavailable cue is a faded thumb, no hover change and the not-allowed cursor. */
+.mm-switch[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+.mm-switch[aria-disabled="true"] .mm-thumb {
+  opacity: .55;
+}
+
+.mm-switch[aria-busy="true"] {
+  cursor: progress;
+}
+
+.mm-locked {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--mm-space) * 1.5);
+  min-height: var(--mm-target);
+  color: var(--mm-muted);
+  font-weight: var(--mm-medium);
+  white-space: nowrap;
+}
+
+/* Lines that say what happened: a card's result, an error, a hint. */
+.mm-msg,
+.mm-error {
+  display: flex;
+  gap: calc(var(--mm-space) * 1.5);
+  align-items: flex-start;
+  margin: 0;
+  word-break: keep-all;
+}
+
+.mm-msg > .mm-icon,
+.mm-error > .mm-icon {
+  margin-top: .2em;
+}
+
+.mm-error,
+.mm-msg[data-tone="danger"] {
+  color: var(--mm-danger-ink);
+}
+
+.mm-msg[data-tone="info"] {
+  color: var(--mm-fg);
+}
+
+.mm-hint {
+  margin: 0;
+  color: var(--mm-muted);
+  word-break: keep-all;
+}
+
+/* The reload notice: one neutral wash, the text, and the page's one prominent button at the trailing end. */
+.mm-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--mm-space) * 2) calc(var(--mm-space) * 3);
+  padding: calc(var(--mm-space) * 3) calc(var(--mm-space) * 4);
+  border-radius: var(--mm-radius);
+  background: var(--mm-wash);
+  word-break: keep-all;
+}
+
+.mm-notice-text {
+  flex: 1 1 12rem;
+  min-width: 0;
+  margin: 0;
+  font-weight: var(--mm-medium);
+}
+
+/* Icon status: a section title and a three-column table on the settings surface, with neutral hairlines between rows. */
+.mm-icons {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mm-space) * 2);
+}
+
+.mm-section-title {
+  margin: 0;
+  font-size: var(--mm-fs-title);
+  font-weight: var(--mm-semibold);
+}
+
+.mm-surface {
+  overflow: hidden;
+  border: 1px solid var(--mm-surface-line);
+  border-radius: var(--mm-radius);
+  background: var(--mm-surface);
+}
+
+.mm-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.mm-table th,
+.mm-table td {
+  padding: calc(var(--mm-space) * 2.5) calc(var(--mm-space) * 4);
+  border-bottom: 1px solid var(--mm-surface-line);
+  font-weight: inherit;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.mm-table thead th {
+  padding-block: calc(var(--mm-space) * 2);
+  color: var(--mm-muted);
+  font-size: var(--mm-fs-small);
+  font-weight: var(--mm-medium);
+}
+
+.mm-table tbody th {
+  font-weight: var(--mm-medium);
+}
+
+.mm-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.mm-none {
+  color: var(--mm-muted);
+}
+
+/* Controls. */
+.mm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--mm-space) * 1.5);
+  min-height: var(--mm-target);
+  padding: 0 calc(var(--mm-space) * 3);
+  border: 1px solid var(--mm-line);
+  border-radius: var(--mm-radius-control);
+  background: transparent;
+  color: var(--mm-fg);
+  font: inherit;
+  font-weight: var(--mm-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--mm-dur) var(--mm-ease), transform var(--mm-dur) var(--mm-ease);
+}
+
+.mm-btn:hover:not(:disabled) {
+  background: var(--mm-wash);
+}
+
+.mm-btn:active:not(:disabled) {
+  background: var(--mm-press);
+  transform: scale(.97);
+}
+
+/* Disabled: no fill and the muted ink, still AA-legible in both themes. */
+.mm-btn:disabled {
+  border-color: var(--mm-surface-line);
+  background: transparent;
+  color: var(--mm-muted);
+  cursor: not-allowed;
+}
+
+.mm-btn[aria-busy="true"] {
+  cursor: progress;
+}
+
+.mm-btn-primary {
+  border-color: transparent;
+  background: var(--mm-primary);
+  color: var(--mm-primary-fg);
+}
+
+.mm-btn-primary:disabled {
+  border-color: transparent;
+  background: var(--mm-wash);
+}
+
+.mm-btn-primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--mm-primary) 86%, var(--mm-fg));
+}
+
+.mm-btn-primary:active:not(:disabled) {
+  background: color-mix(in oklab, var(--mm-primary) 72%, var(--mm-fg));
+}
+
+/* Confirm dialog: a scrim over our page only, the raised dialog centred in it. */
+.mm-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: calc(var(--mm-space) * 4);
+  background: color-mix(in oklab, var(--mm-bg) 72%, transparent);
+  transition: opacity var(--mm-dur) var(--mm-ease);
+}
+
+/* The dialog's two ends: it is inserted at the start values (data-enter, dropped once they are committed) and leaves
+   to them again (data-leave). Transitions run from the current values, so a leave during the entry turns back from
+   wherever the entry got to. Clicks pass through while it leaves. */
+.mm-scrim[data-enter],
+.mm-scrim[data-leave] {
+  opacity: 0;
+}
+
+.mm-scrim[data-leave] {
+  pointer-events: none;
+}
+
+.mm-scrim[data-enter] .mm-dialog,
+.mm-scrim[data-leave] .mm-dialog {
+  opacity: 0;
+  transform: translateY(calc(var(--mm-space) * 1)) scale(.98);
+}
+
+.mm-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mm-space) * 4);
+  width: min(32rem, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: calc(var(--mm-space) * 5);
+  border: 1px solid var(--mm-line);
+  border-radius: var(--mm-radius);
+  background: var(--mm-raised);
+  color: var(--mm-raised-fg);
+  box-shadow: var(--mm-shadow);
+  word-break: keep-all;
+  outline: none;
+  transition: opacity var(--mm-dur) var(--mm-ease), transform var(--mm-dur) var(--mm-ease);
+}
+
+.mm-dialog-title {
+  margin: 0;
+  font-size: var(--mm-fs-title);
+  font-weight: var(--mm-semibold);
+}
+
+.mm-dialog-desc {
+  margin: 0;
+}
+
+.mm-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: calc(var(--mm-space) * 2);
+}
+
+/* The list could not be read. */
+.mm-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--mm-space) * 3);
+  padding: calc(var(--mm-space) * 10) calc(var(--mm-space) * 4);
+  text-align: center;
+  word-break: keep-all;
+}
+
+.mm-failed-title {
+  margin: 0;
+  font-size: var(--mm-fs-title);
+  font-weight: var(--mm-semibold);
+}
+
+.mm-failed p {
+  max-width: 32rem;
+  margin: 0;
+  color: var(--mm-muted);
+}
+
+/* Loading placeholders: each bar sits in a one-line box of the loaded text's class, so heights match the page. */
+.mm-skel-line {
+  display: block;
+}
+
+.mm-skel-bar {
+  display: inline-block;
+  max-width: 100%;
+  height: .75em;
+  border-radius: calc(var(--mm-space) * 1);
+  background: var(--mm-wash);
+  vertical-align: middle;
+}
+
+.mm-skel-s {
+  width: 4em;
+}
+
+.mm-skel-m {
+  width: 9em;
+}
+
+.mm-skel-l {
+  width: 16em;
+}
+
+.mm-skel-switch {
+  display: block;
+  width: var(--mm-track-w);
+  height: var(--mm-track-h);
+  margin: calc((var(--mm-target) - var(--mm-track-h)) / 2) calc(var(--mm-space) * 1);
+  border-radius: calc(var(--mm-track-h) / 2);
+  background: var(--mm-wash);
+}
+
+/* Reduced motion: the switch thumb jumps, the dialog only fades, and a press only changes colour. */
+@media (prefers-reduced-motion: reduce) {
+  .mm-thumb {
+    transition: background-color var(--mm-dur) var(--mm-ease);
+  }
+
+  .mm-scrim[data-enter] .mm-dialog,
+  .mm-scrim[data-leave] .mm-dialog {
+    transform: none;
+  }
+
+  .mm-btn:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* While our page is open the app's own selected settings row shows as idle, so only 모드 reads as selected. Style
+   only: no app node is moved, changed or re-attributed. */
+body:has(> .mm-root[data-open]) [data-slot="settings-nav-indicator"] {
+  visibility: hidden;
+}
+
+body:has(> .mm-root[data-open]) [data-settings-nav-path][data-active="true"] {
+  background-color: transparent;
+  color: var(--sidebar-muted-foreground);
+}
+
+body:has(> .mm-root[data-open]) [data-settings-nav-path][data-active="true"] > svg {
+  color: var(--sidebar-icon-color);
+}

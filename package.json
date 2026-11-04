@@ -1,0 +1,12 @@
+{
+  "name": "omo-app-mods",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --import ./test/helpers/refuse-live-writes.mjs --test --test-isolation=none test/*.test.mjs",
+    "test:local": "node --import ./test/helpers/refuse-live-writes.mjs --test --test-isolation=none test-local/*.test.mjs"
+  }
+}

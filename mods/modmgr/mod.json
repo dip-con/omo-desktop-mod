@@ -1,0 +1,39 @@
+{
+  "id": "modmgr",
+  "name": "Mods",
+  "nameKo": "모드 관리",
+  "descriptionKo": "모드를 켜고 끄는 화면",
+  "version": "1.0.0",
+  "enabled": true,
+  "locked": true,
+  "order": 0,
+  "entry": {
+    "page": "page.js",
+    "css": "page.css",
+    "host": "host.mjs"
+  },
+  "contributes": {
+    "settingsPage": {
+      "id": "mods",
+      "label": "모드"
+    }
+  },
+  "testedBuilds": [
+    "8b8c0973690f9dc58a3aa0f04a2af8017490a32f2f60ab9c18b6c6d03a3ca279",
+    "9ae0f822a89fb040d965883a6db99db062a1dc2f4c125506f51bca9f4e04faf8"
+  ],
+  "anchors": [
+    {
+      "selector": "#root",
+      "route": "*"
+    },
+    {
+      "selector": "[data-settings-nav-path]",
+      "route": "/settings/"
+    },
+    {
+      "selector": "html > body > div#root > div:nth-of-type(1) > div > div > div > main > div",
+      "route": "/settings/"
+    }
+  ]
+}
