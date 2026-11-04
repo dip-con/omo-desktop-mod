@@ -503,9 +503,24 @@ var onResize = guarded(function () {
   if (view) place();
 });
 
+var navCheckTimer = null;
+var navCheckDue = false;
+
 function sync() {
   syncQueued = false;
   if (view && location.pathname !== openPath) close();
+  if (view && !document.querySelector(NAV_SELECTOR)) {
+    if (navCheckDue) close();
+    else if (navCheckTimer === null) navCheckTimer = setTimeout(guarded(function () {
+      navCheckTimer = null;
+      navCheckDue = true;
+      sync();
+    }), 250);
+  } else {
+    clearTimeout(navCheckTimer);
+    navCheckTimer = null;
+    navCheckDue = false;
+  }
   syncNav();
   if (view) place();
 }
@@ -660,6 +675,9 @@ function openPage() {
 
 function close() {
   if (!view) return;
+  clearTimeout(navCheckTimer);
+  navCheckTimer = null;
+  navCheckDue = false;
   clearTimeout(reloadTimer);
   openSeq += 1;
   view = null;
