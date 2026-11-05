@@ -22,12 +22,12 @@ node tools/install.mjs --mod <ko 저장소>/mods/ko
 
 로더가 앱을 실행하는 동안 앱은 로컬 디버그 포트(127.0.0.1)를 열어요. 같은 컴퓨터의 다른 프로그램도 거기에 접속할 수 있어요.
 
-## 원작과 라이선스
+## 한국어 번역 모드와 라이선스
 
-이 저장소는 grim-susemi의 [omo-desktop-mod-loader](https://github.com/grim-susemi/omo-desktop-mod-loader)(MIT, Windows용)를 macOS용으로 옮긴 판이에요. 한국어 번역 모드도 grim-susemi의 [omo-desktop-ko-translation](https://github.com/grim-susemi/omo-desktop-ko-translation)(MIT)에서 왔어요. 라이선스는 [LICENSE](LICENSE)를 보세요.
+한국어 화면 모드는 [dip-con/omo-desktop-ko-translation](https://github.com/dip-con/omo-desktop-ko-translation)에 있어요. 라이선스는 MIT예요. [LICENSE](LICENSE)를 보세요.
 
 ## English
 
-An unofficial macOS loader for OmO desktop mods, ported from grim-susemi's MIT-licensed Windows loader. It attaches mods at launch and never modifies `/Applications/OmO.app`.
+An unofficial macOS loader for OmO desktop mods (MIT). It attaches mods at launch and never modifies `/Applications/OmO.app`.
 
 Install with Node.js 24+: `node tools/install.mjs --mod <ko repo>/mods/ko` (omit `--mod` for the loader only). Quit OmO, then start it from `~/Applications/OmO Mods.app` or Spotlight. Hold Shift or pass `--safe` to start without mods. See [INSTALL.md](INSTALL.md), [UPDATE.md](UPDATE.md), [UNINSTALL.md](UNINSTALL.md) and [docs/MOD-FORMAT.md](docs/MOD-FORMAT.md).

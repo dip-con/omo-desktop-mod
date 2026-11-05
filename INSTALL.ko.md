@@ -9,12 +9,12 @@
 ## 1. 저장소 받기
 
 ```sh
-git clone https://github.com/grim-susemi/omo-desktop-mod-loader omo-desktop-mod
-git clone https://github.com/grim-susemi/omo-desktop-ko-translation
+git clone https://github.com/dip-con/omo-desktop-mod
+git clone https://github.com/dip-con/omo-desktop-ko-translation
 cd omo-desktop-mod
 ```
 
-macOS판을 쓰는 중이라면 각자 받은 저장소 주소로 바꿔 주세요. 두 폴더는 지우지 마세요. 업데이트할 때 여기서 새 파일을 가져와요.
+두 폴더는 같은 곳에 나란히 두고 지우거나 옮기지 마세요. 업데이트할 때 여기서 새 파일을 가져와요.
 
 ## 2. 설치하기
 

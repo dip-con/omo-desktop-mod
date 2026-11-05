@@ -11,13 +11,13 @@ Korean version: [INSTALL.ko.md](INSTALL.ko.md)
 ## Steps
 
 ```sh
-git clone https://github.com/grim-susemi/omo-desktop-mod-loader omo-desktop-mod
-git clone https://github.com/grim-susemi/omo-desktop-ko-translation
+git clone https://github.com/dip-con/omo-desktop-mod
+git clone https://github.com/dip-con/omo-desktop-ko-translation
 cd omo-desktop-mod
 node tools/install.mjs --mod ../omo-desktop-ko-translation/mods/ko
 ```
 
-Use your own clone URLs if you work from the macOS fork. Keep both folders: updates copy from them.
+Keep both folders side by side and do not move them: updates copy from them.
 
 Options: `--dry-run` writes nothing, `--mods-home <dir>` (default `~/.omo/app-mods`), `--apps-dir <dir>` (default `~/Applications`), `--no-launcher`. On reinstall, repeat `--mod` for every external mod you want to keep. `node tools/install.mjs --help` lists everything.
 
