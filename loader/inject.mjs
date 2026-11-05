@@ -95,6 +95,9 @@ export async function serveMainWindows({ wsUrl, rule, resolveMods, omoProfile = 
   };
   refresh();
   const hosts = new Map();
+  // Bumped by reloadAll: a host module is imported again under a new URL, so an updated mod's host and the data it
+  // caches (a dictionary, for example) take effect without restarting the loader.
+  let hostGeneration = 0;
   const sessions = new Map();
   const cdp = await openCdp(wsUrl);
   log('cdp connected');
@@ -135,7 +138,7 @@ export async function serveMainWindows({ wsUrl, rule, resolveMods, omoProfile = 
     if (!mod.hostFile) throw hostFailure('NO_HOST');
     if (!hosts.has(modId)) {
       try {
-        hosts.set(modId, await import(pathToFileURL(mod.hostFile).href));
+        hosts.set(modId, await import(`${pathToFileURL(mod.hostFile).href}?gen=${hostGeneration}`));
       } catch (err) {
         throw hostFailure(`HOST_LOAD: ${err.message}`);
       }
@@ -183,6 +186,8 @@ export async function serveMainWindows({ wsUrl, rule, resolveMods, omoProfile = 
   // page reloads so that bundle runs. A session the watchdog emptied has no script to replace; it is skipped.
   async function reloadAll() {
     refresh();
+    hosts.clear();
+    hostGeneration += 1;
     onEvent({ kind: 'reloaded' });
     for (const entry of [...sessions.values()]) {
       if (entry.sessionId === null || entry.identifier === null) continue;
