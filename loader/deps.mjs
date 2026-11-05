@@ -1,12 +1,14 @@
 // Real operating-system dependencies for the loader's main flow (launch.mjs). Tests never reach these effects;
-// they pass fakes into runLaunch instead.
-import { execFileSync, spawn } from 'node:child_process';
+// they pass fakes into runLaunch instead. macOS only: processes come from ps, the port owner from lsof, the boxes
+// and the Shift state from osascript.
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PORT_VAR, pickLoopbackPort, sameExe } from './launch.mjs';
-import { readFingerprint, buildKey } from './fingerprint.mjs';
+import { PORT_VAR, pickLoopbackPort } from './launch.mjs';
+import { defaultMessageBox, omoProcesses, portOwner, processChildren, readOmoProfileWith, selectOmoProcesses, shiftHeldWith, startTimeOf } from './macos.mjs';
+import { appResourcesDir, readFingerprint, buildKey } from './fingerprint.mjs';
 import { discoverMods, modsRootFor, partitionEnabled } from './mods.mjs';
 import { serveMainWindows, loadModSources } from './inject.mjs';
 import { ownerAllowed } from './ownership.mjs';
@@ -14,17 +16,37 @@ import { watchApp } from './lifecycle.mjs';
 import { pidAlive } from './pid.mjs';
 import { mainRuleFromFacts } from './target.mjs';
 
+export { appResourcesDir };
+// The macOS queries keep their old import path for callers and tests.
+export { childrenFrom, defaultMessageBox, dialogArgs, MODIFIER_SCRIPT, modifierFlagsHoldShift, omoProcessesFrom, parsePsRows, queryOptions, readOmoProfileWith, selectOmoProcesses, shiftHeldWith } from './macos.mjs';
+
 const loaderDir = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_APP_EXE = path.join(os.userInfo().homedir, 'AppData', 'Local', 'Programs', 'omo', 'OmO.exe');
-// LOADER_STATE_DIR moves the state file, lock and logs (tests and subprocess checks). Default: %LOCALAPPDATA%.
-const stateDir = process.env.LOADER_STATE_DIR || path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'), 'omo-app-mods');
-const stateFile = path.join(stateDir, 'state.json');
-const logDir = path.join(stateDir, 'logs');
+const DEFAULT_APP_BUNDLE = '/Applications/OmO.app';
 const WATCHDOG_TEXT = '화면이 비어 있거나 모드 오류가 나서 모드를 떼고 원래 화면으로 다시 열었어요.';
 
-export function readConfigAppExe() {
+// LOADER_STATE_DIR moves the state file, lock and logs (tests and subprocess checks).
+export function defaultStateDir() {
+  return process.env.LOADER_STATE_DIR || path.join(os.homedir(), 'Library', 'Application Support', 'omo-app-mods');
+}
+
+const stateDir = defaultStateDir();
+const stateFile = path.join(stateDir, 'state.json');
+const logDir = path.join(stateDir, 'logs');
+
+// The app bundle named by <loaderDir>/config.json "appBundle", else /Applications/OmO.app.
+export function readConfigAppBundle() {
   const file = path.join(loaderDir, 'config.json');
-  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).appExe : DEFAULT_APP_EXE;
+  const bundle = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).appBundle : undefined;
+  return typeof bundle === 'string' && bundle !== '' ? bundle : DEFAULT_APP_BUNDLE;
+}
+
+// The executable inside a bundle.
+export function bundleExe(bundle) {
+  return path.join(bundle, 'Contents', 'MacOS', 'OmO');
+}
+
+export function readConfigAppExe() {
+  return bundleExe(readConfigAppBundle());
 }
 
 export function readState() {
@@ -43,74 +65,6 @@ function writeState(state) {
   writeStateFile(stateFile, state);
 }
 
-const POWERSHELL_TIMEOUT_MS = 15000;
-
-// Options for every PowerShell query. A query that hangs (a stuck WMI provider) is killed after the timeout and throws,
-// the same way a non-zero exit does, so each caller already handles it.
-export function powershellOptions(env = {}) {
-  return { encoding: 'utf8', env: { ...process.env, ...env }, timeout: POWERSHELL_TIMEOUT_MS, windowsHide: true };
-}
-
-function powershell(script, env = {}) {
-  return execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], powershellOptions(env)).trim();
-}
-
-// Pure: the rows (CIM JSON, one object or an array) whose executable is appExe. sameExe normalises case and slashes.
-export function omoProcessesFrom(rows, appExe) {
-  return [rows]
-    .flat()
-    .filter((r) => r.ExecutablePath && sameExe(r.ExecutablePath, appExe))
-    .map((r) => ({ pid: r.ProcessId, ppid: r.ParentProcessId, exePath: r.ExecutablePath }));
-}
-
-// OmO processes whose executable is the installed OmO.exe.
-function omoProcesses(appExe) {
-  const out = powershell("Get-CimInstance Win32_Process -Filter \"Name='OmO.exe'\" | Select-Object ProcessId,ParentProcessId,ExecutablePath | ConvertTo-Json -Compress");
-  if (out === '') return [];
-  return omoProcessesFrom(JSON.parse(out), appExe);
-}
-
-// Process start time in ms (UTC), or null when the pid is gone. Used to detect a reused pid in a lock.
-function startTimeOf(pid) {
-  try {
-    return Number(powershell(`[DateTimeOffset]::new((Get-Process -Id ${Number(pid)}).StartTime.ToUniversalTime()).ToUnixTimeMilliseconds()`));
-  } catch {
-    return null;
-  }
-}
-
-// Child lookup over all processes (one query), used for the owner-tree check.
-function processChildren() {
-  const rows = [JSON.parse(powershell('Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress'))].flat();
-  return (pid) => rows.filter((r) => r.ParentProcessId === pid).map((r) => r.ProcessId);
-}
-
-// PID listening on the port, or null.
-function portOwner(port) {
-  const out = powershell(`(Get-NetTCPConnection -LocalPort ${Number(port)} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess`);
-  return out === '' ? null : Number(out);
-}
-
-// OMO_PROFILE from the spawn environment, else from HKCU\Environment. Read only: never changed or cleared.
-export function readOmoProfileWith(env, run = powershell) {
-  if (env.OMO_PROFILE) return env.OMO_PROFILE;
-  const value = run("(Get-ItemProperty -Path 'HKCU:\\Environment' -Name OMO_PROFILE -ErrorAction SilentlyContinue).OMO_PROFILE");
-  return value === '' ? null : value;
-}
-
-// Pure: whether the Shift key is in the ModifierKeys output ("None", "Shift" or "Control, Shift").
-export function modifierKeysHoldShift(text) {
-  return text.split(/[\s,]+/).includes('Shift');
-}
-
-// Shift state from its own PowerShell call. It does not go through powershell() or readOmoProfileWith, so it works with OMO_PROFILE set.
-const MODIFIER_SCRIPT = 'Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Control]::ModifierKeys';
-
-// `run` takes a PowerShell script and its env and returns stdout; tests pass a spy. The default runs powershell.exe directly.
-export function shiftHeldWith(run = (script, env) => execFileSync('powershell.exe', ['-NoProfile', '-Command', script], powershellOptions(env)), env = process.env) {
-  return modifierKeysHoldShift(run(MODIFIER_SCRIPT, env));
-}
-
 async function answers(port) {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(2000) });
@@ -118,17 +72,6 @@ async function answers(port) {
   } catch {
     return null;
   }
-}
-
-// Message box without blocking the loader: the box is a separate PowerShell process that the loader does not wait for.
-export function defaultMessageBox(text) {
-  const child = spawn('powershell.exe', ['-NoProfile', '-Command', 'Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show($env:LOADER_MESSAGE_TEXT, "OmO (모드)") | Out-Null'], {
-    env: { ...process.env, LOADER_MESSAGE_TEXT: text },
-    stdio: 'ignore',
-    detached: true,
-    windowsHide: true,
-  });
-  child.unref();
 }
 
 export const LOG_KEEP = 10;
@@ -213,8 +156,8 @@ export function wireInject(io) {
 }
 
 export function realDeps({ planOnly = false } = {}) {
-  const appExe = readConfigAppExe();
-  const appDir = path.dirname(appExe);
+  const appBundle = readConfigAppBundle();
+  const appExe = bundleExe(appBundle);
   const log = openLog(new Date().toISOString());
   process.on('beforeExit', (code) => log(`process beforeExit ${code}`));
   process.on('exit', (code) => log(`process exit ${code}`));
@@ -238,7 +181,7 @@ export function realDeps({ planOnly = false } = {}) {
     },
     // Plan-only never shows a box: the text goes to the log instead.
     messageBox: planOnly ? (text) => log(`plan-only message: ${text}`) : defaultMessageBox,
-    omoProcesses: () => omoProcesses(appExe),
+    omoProcesses: () => selectOmoProcesses({ env: process.env, state: readState(), appExe, isAlive: pidAlive, listAll: () => omoProcesses(appExe) }),
     readState,
     probe: async (state, processes) => {
       const port = state?.port;
@@ -251,7 +194,7 @@ export function realDeps({ planOnly = false } = {}) {
       };
     },
     pickPort: () => pickLoopbackPort(),
-    // Plain start: OmO.exe with no arguments and the debug-port variable removed. Detached and never waited for.
+    // Plain start: the bundle executable with no arguments and the debug-port variable removed. Detached and never waited for.
     plainStart: () => {
       const env = { ...process.env };
       delete env[PORT_VAR];
@@ -267,7 +210,7 @@ export function realDeps({ planOnly = false } = {}) {
     },
     writeState,
     now: () => new Date().toISOString(),
-    fingerprint: () => readFingerprint(appDir),
+    fingerprint: () => readFingerprint(appBundle),
     waitForVersion: async (port, ms) => {
       const deadline = Date.now() + ms;
       while (Date.now() < deadline) {
@@ -294,7 +237,7 @@ export function realDeps({ planOnly = false } = {}) {
       messageBox: (text) => deps.messageBox(text),
       log,
       buildKey,
-      fingerprint: () => readFingerprint(appDir),
+      fingerprint: () => readFingerprint(appBundle),
       loaderDir,
       modsRoot,
     }),

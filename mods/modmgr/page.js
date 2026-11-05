@@ -2,7 +2,7 @@
 // (loader/README.md "Page API"). The first half is pure: render(view) returns the page as an HTML string with every
 // value escaped, plus the helpers it uses; node tests can reach them through omoMods.expose. The second half is the
 // page glue: the 모드 nav group and our item in it, the overlay over the FACTS content region, the host calls (list,
-// setEnabled, shortcuts) and the loader's __reload control message. Mods do not import each other, so the nav item,
+// setEnabled, checkUpdates, applyUpdates) and the loader's __reload control message. Mods do not import each other, so the nav item,
 // overlay and repaint glue repeats the pattern of the other settings-page mods.
 
 var MOD = 'modmgr';
@@ -24,6 +24,28 @@ var RELOAD_WAIT_MS = 15000;
 var PENDING_TEXT = '창을 새로 고치면 적용돼요';
 var CONFIRM_TEXT = '진행 중인 답변이 있으면 끊길 수 있어요. 새로 고칠까요?';
 
+// The update card (loader/update.mjs, through the host's checkUpdates and applyUpdates).
+var UPDATE_TITLE = '업데이트';
+var UPDATE_DESC = '설치 원본과 비교해 바뀐 모드를 가져와요';
+var UPDATE_EMPTY_TEXT = '확인할 모드가 없어요. 설치 기록에 원본이 적힌 모드가 없어요';
+var UPDATE_CHECK_LABEL = '업데이트 확인';
+var UPDATE_APPLY_LABEL = '업데이트 적용';
+// Names for ids without a mod card; any other id shows as itself.
+var UPDATE_NAMES = { _loader: '로더' };
+// One row's status after [업데이트 확인], then after [업데이트 적용].
+var UPDATE_STATUS = {
+  latest: '최신', changed: '새 버전 있음', checkFailed: '확인 실패: ',
+  applied: '적용됨', skipped: '바뀐 게 없어요', applyFailed: '적용 실패: ',
+};
+// One plain line per error prefix of loader/update.mjs; the detail after the prefix follows in brackets.
+var UPDATE_ERROR_KO = {
+  NO_SOURCE: '설치 원본이 기록돼 있지 않아요',
+  SOURCE_MISSING: '설치 원본 폴더를 찾지 못했어요',
+  READ_FAILED: '설치 원본을 읽지 못했어요',
+  APPLY_FAILED: '파일을 바꾸지 못했어요',
+  PULL_FAILED: '원본 저장소를 당겨 오지 못했어요',
+};
+
 // One plain line per refusal code (mods/modmgr/host.mjs, the bridge and this page).
 var ERROR_KO = {
   STALE: '다른 곳에서 바뀌었어요. 다시 불러올게요',
@@ -40,6 +62,7 @@ var ERROR_KO = {
   PAGE_ERROR: '화면에서 오류가 났어요',
   RELOAD_UNAVAILABLE: '새로 고침 요청을 보내지 못했어요. 앱을 다시 켜면 적용돼요',
   RELOAD_TIMEOUT: '창이 새로 고쳐지지 않았어요. 앱을 다시 켜면 적용돼요',
+  NO_MANIFEST: '설치 기록(install-manifest.json)을 읽지 못했어요',
 };
 
 // Lucide paths (the app's icon set), 24x24, stroke currentColor.
@@ -217,6 +240,217 @@ function renderConfirm(view) {
     + '</div></div></div>';
 }
 
+// ---- Update card ----------------------------------------------------------------------------------------------
+// Its state is view.update: phase idle | checked | applied, busy null | 'check' | 'apply', the rows of the last
+// check, the code of a failed call, and the result of the last apply. The two flows take their page hooks as `io`,
+// so node tests drive them without a document: io.request(method, args) is the always-resolving host call,
+// io.paint() repaints, io.live() says whether this page open is still the one that started the call, io.guard(fn)
+// wraps the continuation (guarded on the page), and io.applied(ids) follows an apply that changed something.
+
+function emptyUpdate() {
+  return { phase: 'idle', busy: null, items: [], error: null, result: null };
+}
+
+// An update.mjs error text ('SOURCE_MISSING: /path not found', 'git pull --ff-only failed: ...') as one plain line.
+function updateErrorLine(text) {
+  var s = plain(text);
+  var m = /^([A-Z_]+):\s*([\s\S]*)$/.exec(s);
+  var code = m ? m[1] : (s.indexOf('git pull ') === 0 ? 'PULL_FAILED' : null);
+  var detail = m ? m[2].trim() : s.replace(/^git pull [^:]*:\s*/, '');
+  if (code !== null && has(UPDATE_ERROR_KO, code)) return UPDATE_ERROR_KO[code] + (detail ? ' (' + detail + ')' : '');
+  return s || errorLine('HOST_ERROR');
+}
+
+// Rows from a checkUpdates reply; an entry without a string id is skipped, as in cardsFrom.
+function updateItemsFrom(items) {
+  var seen = {};
+  var rows = [];
+  (Array.isArray(items) ? items : []).forEach(function (it) {
+    if (!isObject(it) || typeof it.id !== 'string' || it.id === '' || has(seen, it.id)) return;
+    seen[it.id] = true;
+    rows.push({ id: it.id, changed: it.changed === true, error: plain(it.error) || null });
+  });
+  return rows;
+}
+
+// The ids [업데이트 적용] sends: the rows with a new version and no check error.
+function changedIds(update) {
+  return update.items.filter(function (it) {
+    return it.changed && it.error === null;
+  }).map(function (it) {
+    return it.id;
+  });
+}
+
+function entryById(list, id) {
+  for (var i = 0; i < list.length; i += 1) if (list[i].id === id) return list[i];
+  return null;
+}
+
+// The applyUpdates reply with only the fields the card shows, each checked for its type.
+function applyResultFrom(r) {
+  var entries = function (list, key) {
+    return (Array.isArray(list) ? list : []).filter(function (x) {
+      return isObject(x) && typeof x.id === 'string';
+    }).map(function (x) {
+      return { id: x.id, text: plain(x[key]) };
+    });
+  };
+  return {
+    applied: (Array.isArray(r.applied) ? r.applied : []).filter(function (x) {
+      return typeof x === 'string';
+    }),
+    skipped: entries(r.skipped, 'reason'),
+    errors: entries(r.errors, 'message'),
+  };
+}
+
+// Chip text and tone of one row: its apply result when it went through [업데이트 적용], else its check result. A row
+// that was applied although its repository pull failed reads 적용됨; that failure is listed under the rows.
+function updateRowStatus(row, result) {
+  if (result) {
+    if (result.applied.indexOf(row.id) >= 0) return { text: UPDATE_STATUS.applied, tone: 'ok' };
+    var failed = entryById(result.errors, row.id);
+    if (failed) return { text: UPDATE_STATUS.applyFailed + updateErrorLine(failed.text), tone: 'danger' };
+    if (entryById(result.skipped, row.id)) return { text: UPDATE_STATUS.skipped, tone: 'off' };
+  }
+  if (row.error !== null) return { text: UPDATE_STATUS.checkFailed + updateErrorLine(row.error), tone: 'danger' };
+  if (row.changed) return { text: UPDATE_STATUS.changed, tone: 'warn' };
+  return { text: UPDATE_STATUS.latest, tone: 'ok' };
+}
+
+// Apply errors that no row's chip carries: an applied row's pull failure, or an id that was not in the check.
+function updateExtraErrors(update) {
+  var r = update.result;
+  if (!r) return [];
+  return r.errors.filter(function (e) {
+    return entryById(update.items, e.id) === null || r.applied.indexOf(e.id) >= 0;
+  });
+}
+
+// What the card's live region says; '' when there is nothing new.
+function updateStatusText(update) {
+  if (update.busy === 'check') return '업데이트를 확인하는 중이에요';
+  if (update.busy === 'apply') return '업데이트를 적용하는 중이에요';
+  if (update.error !== null) return errorLine(update.error);
+  if (update.phase === 'applied') {
+    return '적용한 모드 ' + update.result.applied.length + '개'
+      + (update.result.errors.length ? ', 실패 ' + update.result.errors.length + '개' : '');
+  }
+  if (update.phase === 'checked') {
+    if (update.items.length === 0) return UPDATE_EMPTY_TEXT;
+    var changed = changedIds(update).length;
+    var failed = update.items.filter(function (it) {
+      return it.error !== null;
+    }).length;
+    return (changed ? '새 버전이 있는 모드 ' + changed + '개' : '모든 모드가 최신이에요') + (failed ? ', 확인 실패 ' + failed + '개' : '');
+  }
+  return '';
+}
+
+// [업데이트 확인]: one checkUpdates call; its rows replace the last ones. Returns the pending promise, or null while a
+// call is running.
+function runUpdateCheck(view, io) {
+  var u = view.update;
+  if (u.busy !== null) return null;
+  u.busy = 'check';
+  u.error = null;
+  io.paint();
+  return io.request('checkUpdates', []).then(io.guard(function (r) {
+    if (!io.live()) return;
+    u.busy = null;
+    if (r.ok === true && Array.isArray(r.items)) {
+      u.phase = 'checked';
+      u.items = updateItemsFrom(r.items);
+      u.result = null;
+    } else {
+      u.error = r.ok === true ? 'HOST_ERROR' : String(r.code || 'HOST_ERROR');
+    }
+    io.paint();
+  }));
+}
+
+// [업데이트 적용]: applyUpdates for the rows with a new version, after a git pull of their repositories. Returns the
+// pending promise, or null while a call is running or when there is nothing to apply.
+function runUpdateApply(view, io) {
+  var u = view.update;
+  var ids = u.phase === 'checked' ? changedIds(u) : [];
+  if (u.busy !== null || ids.length === 0) return null;
+  u.busy = 'apply';
+  u.error = null;
+  io.paint();
+  return io.request('applyUpdates', [{ ids: ids, pull: true }]).then(io.guard(function (r) {
+    if (!io.live()) return;
+    u.busy = null;
+    if (r.ok !== true) {
+      u.error = String(r.code || 'HOST_ERROR');
+      io.paint();
+      return;
+    }
+    u.phase = 'applied';
+    u.result = applyResultFrom(r);
+    if (u.result.applied.length > 0) io.applied(u.result.applied);
+    io.paint();
+  }));
+}
+
+function updateName(id, view) {
+  var card = entryById(view.cards, id);
+  if (card) return card.name;
+  return has(UPDATE_NAMES, id) ? UPDATE_NAMES[id] : id;
+}
+
+// A button whose label and busy label share one slot, so its box keeps its size while the call runs. While either
+// call runs both buttons are aria-disabled (the click handler skips those) rather than disabled, so focus stays put.
+function renderUpdateButton(act, label, busyLabel, state) {
+  return '<button type="button" class="mm-btn' + (state.primary ? ' mm-btn-primary' : '') + '" data-act="' + act + '" data-focus="' + act + '"'
+    + (state.busy ? ' aria-busy="true"' : '') + (state.off ? ' aria-disabled="true"' : '') + '>'
+    + '<span class="mm-btn-swap"><span' + (state.busy ? ' data-off' : '') + '>' + label + '</span>'
+    + '<span' + (state.busy ? '' : ' data-off') + '>' + busyLabel + '</span></span></button>';
+}
+
+function renderUpdateRow(row, view) {
+  var s = updateRowStatus(row, view.update.result);
+  var name = updateName(row.id, view);
+  return '<li class="mm-update-row" data-mm-update-row="' + esc(row.id) + '">'
+    + '<span class="mm-update-mod">' + esc(name) + '</span>'
+    + (name !== row.id ? '<span class="mm-update-id">' + esc(row.id) + '</span>' : '')
+    + '<span class="mm-chip" data-tone="' + s.tone + '">' + esc(s.text) + '</span></li>';
+}
+
+// The update card under the list: title and line, the rows of the last check with their status, errors in place, and
+// the buttons at the trailing end. [업데이트 적용] shows only while a checked row has a new version.
+function renderUpdate(view) {
+  var u = view.update;
+  var busy = u.busy !== null;
+  var ids = u.phase === 'checked' ? changedIds(u) : [];
+  var extra = updateExtraErrors(u);
+  return '<section class="mm-card mm-update" data-mm-update data-phase="' + u.phase + '" aria-labelledby="mm-update-title">'
+    + '<div class="mm-card-main">'
+    + '<div class="mm-head"><h2 class="mm-name" id="mm-update-title">' + UPDATE_TITLE + '</h2></div>'
+    + '<p class="mm-desc">' + UPDATE_DESC + '</p>'
+    + '<p class="mm-sr" role="status" data-mm-update-status>' + esc(updateStatusText(u)) + '</p>'
+    + (u.error !== null
+      ? '<p class="mm-error" role="alert" data-mm-update-error="' + esc(u.error) + '">' + icon('alert') + '<span>' + esc(errorLine(u.error)) + '</span></p>'
+      : '')
+    + (u.phase !== 'idle' && u.items.length === 0 && u.error === null ? '<p class="mm-hint" data-mm-update-empty>' + UPDATE_EMPTY_TEXT + '</p>' : '')
+    + '</div>'
+    + (u.items.length
+      ? '<ul class="mm-update-rows" role="list" aria-label="업데이트 확인 결과" data-mm-update-rows>' + u.items.map(function (row) {
+        return renderUpdateRow(row, view);
+      }).join('') + '</ul>'
+      : '')
+    + (extra.length
+      ? '<div class="mm-update-errors" data-mm-update-errors>' + extra.map(function (e) {
+        return '<p class="mm-error" role="alert">' + icon('alert') + '<span>' + esc(updateName(e.id, view) + ': ' + updateErrorLine(e.text)) + '</span></p>';
+      }).join('') + '</div>'
+      : '')
+    + '<div class="mm-card-ctl mm-update-actions">'
+    + renderUpdateButton('update-check', UPDATE_CHECK_LABEL, '확인하는 중', { busy: u.busy === 'check', off: busy })
+    + (ids.length ? renderUpdateButton('update-apply', UPDATE_APPLY_LABEL, '적용하는 중', { primary: true, busy: u.busy === 'apply', off: busy }) : '')
+    + '</div></section>';
+}
+
 // The whole page as one HTML string. Every value that comes from the host goes through esc().
 function render(view) {
   var html = '<div class="mm-page" data-mm-page tabindex="-1" role="region" aria-labelledby="mm-title" data-focus="page">'
@@ -227,14 +461,27 @@ function render(view) {
   if (view.status === 'loading') html += renderLoading();
   else if (view.status === 'failed') html += renderFailure(view);
   else html += renderList(view);
-  html += renderPending(view) + '</div></div>' + (view.confirm ? renderConfirm(view) : '') + '</div>';
+  html += (view.update ? renderUpdate(view) : '') + renderPending(view) + '</div></div>' + (view.confirm ? renderConfirm(view) : '') + '</div>';
   return html;
+}
+
+// Host call that always resolves: a refusal or a bridge failure comes back as {ok: false, code}.
+function request(method, args) {
+  return omoMods.call(method, args).then(function (value) {
+    return isObject(value) ? value : { ok: false, code: 'HOST_ERROR', message: 'empty reply' };
+  }, function (err) {
+    var code = err && err.message === 'BRIDGE_TIMEOUT' ? 'BRIDGE_TIMEOUT' : 'HOST_ERROR';
+    return { ok: false, code: code, message: String(err && err.message) };
+  });
 }
 
 var api = {
   render: render, esc: esc, navPlan: navPlan, cardsFrom: cardsFrom, statusChip: statusChip, switchable: switchable,
-  errorLine: errorLine, CONTENT_SELECTOR: CONTENT_SELECTOR, ERROR_KO: ERROR_KO, NAV_MISSING_TEXT: NAV_MISSING_TEXT,
+  errorLine: errorLine, request: request, CONTENT_SELECTOR: CONTENT_SELECTOR, ERROR_KO: ERROR_KO, NAV_MISSING_TEXT: NAV_MISSING_TEXT,
   PENDING_TEXT: PENDING_TEXT, CONFIRM_TEXT: CONFIRM_TEXT,
+  emptyUpdate: emptyUpdate, runUpdateCheck: runUpdateCheck, runUpdateApply: runUpdateApply, changedIds: changedIds,
+  updateRowStatus: updateRowStatus, updateErrorLine: updateErrorLine, updateStatusText: updateStatusText,
+  UPDATE_STATUS: UPDATE_STATUS, UPDATE_EMPTY_TEXT: UPDATE_EMPTY_TEXT,
 };
 if (omoMods && typeof omoMods.expose === 'function') omoMods.expose(api);
 if (typeof document === 'undefined') return;
@@ -267,8 +514,9 @@ var pendingReload = false;
 var reloadTimer = null;
 // A node keeps its identity across repaints when this attribute names it (value included) or marks it; other nodes
 // are matched by tag, in order, among their siblings without such an attribute.
-var KEY_ATTRS = ['data-focus', 'id', 'data-mm-card', 'data-mm-icon', 'data-mm-msg'];
-var MARK_ATTRS = ['data-mm-scrim', 'data-mm-notice', 'data-mm-loading', 'data-mm-failed', 'data-mm-empty', 'data-mm-icons', 'data-mm-rollback'];
+var KEY_ATTRS = ['data-focus', 'id', 'data-mm-card', 'data-mm-update-row', 'data-mm-msg'];
+var MARK_ATTRS = ['data-mm-scrim', 'data-mm-notice', 'data-mm-loading', 'data-mm-failed', 'data-mm-empty', 'data-mm-update',
+  'data-mm-update-status', 'data-mm-update-error', 'data-mm-update-empty', 'data-mm-update-rows', 'data-mm-update-errors'];
 
 // A page bug becomes an error line on the page (or in the loader notice when the page is closed) instead of an
 // uncaught error, which would make the loader's watchdog detach every mod and reload the app.
@@ -625,16 +873,6 @@ function paint() {
   if (reveal) reveal.scrollIntoView({ block: 'nearest' });
 }
 
-// Host call that always resolves: a refusal or a bridge failure comes back as {ok: false, code}.
-function request(method, args) {
-  return omoMods.call(method, args).then(function (value) {
-    return isObject(value) ? value : { ok: false, code: 'HOST_ERROR', message: 'empty reply' };
-  }, function (err) {
-    var code = err && err.message === 'BRIDGE_TIMEOUT' ? 'BRIDGE_TIMEOUT' : 'HOST_ERROR';
-    return { ok: false, code: code, message: String(err && err.message) };
-  });
-}
-
 // Reads the list again; `before` runs on the fresh view just before it is painted.
 function loadList(before) {
   var seq = openSeq;
@@ -662,7 +900,7 @@ function openPage() {
   }
   openSeq += 1;
   openPath = location.pathname;
-  view = { status: 'loading', cards: [], failure: null, busy: null, msg: null, pending: pendingReload, confirm: null, pageError: null };
+  view = { status: 'loading', cards: [], failure: null, busy: null, msg: null, pending: pendingReload, confirm: null, pageError: null, update: emptyUpdate() };
   root.setAttribute('data-open', '');
   setNavActive(true);
   sizeObserver = new ResizeObserver(onResize);
@@ -737,6 +975,30 @@ function toggle(id) {
     view.busy = null;
     paint();
   }));
+}
+
+// The update card's hooks into this page. After an apply that changed something the reload notice comes up, as after
+// a switch, and the list is read again (the mod.json files may have changed); a focus on the gone [업데이트 적용] moves
+// to [업데이트 확인].
+function updateIo() {
+  var v = view;
+  var seq = openSeq;
+  return {
+    request: request,
+    paint: paint,
+    guard: guarded,
+    live: function () {
+      return view === v && seq === openSeq;
+    },
+    applied: function () {
+      var active = document.activeElement;
+      pendingReload = true;
+      pendingReveal = '[data-mm-notice]';
+      if (active && active.getAttribute('data-focus') === 'update-apply') pendingFocus = 'update-check';
+      paint();
+      loadList();
+    },
+  };
 }
 
 function reloadPage() {
@@ -843,6 +1105,8 @@ function act(name, el) {
   else if (name === 'reload-yes') confirmReload();
   else if (name === 'reload-no') cancelReload();
   else if (name === 'reload-list') reloadPage();
+  else if (name === 'update-check' && !view.confirm) runUpdateCheck(view, updateIo());
+  else if (name === 'update-apply' && !view.confirm) runUpdateApply(view, updateIo());
   else if (name === 'close') leave();
 }
 

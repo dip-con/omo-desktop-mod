@@ -1,23 +1,20 @@
-# Uninstall
+# 제거
 
-Open a terminal in the folder you installed from and run:
+OmO를 종료한 뒤 로더 저장소 폴더에서 실행해요. 설치할 때 `--mods-home`이나 `--apps-dir`을 바꿨다면 같은 값을 넣어 주세요.
 
-```
+```sh
 node tools/install.mjs --uninstall
 ```
 
-Add `--dry-run` first if you want to see the plan without changing anything.
+설치 기록(`~/.omo/app-mods/_loader/install-manifest.json`)에 있는 파일과, 설치 도구가 만든 `OmO Mods.app`만 지워요. 직접 만든 파일은 남겨요. `/Applications/OmO.app`은 처음부터 바꾸지 않았으니 되돌릴 것도 없어요.
 
-## What it does, in order
+남는 것:
 
-1. **Icons first.** It restores the `OmO.lnk` icons from the newest backup record the installer made, checking each file's sha256.
-2. **Then the mods.** It removes exactly the files listed in the install manifest, then the manifest itself. Files you added yourself stay where they are.
+- 비어 있지 않은 폴더 (`~/.omo/app-mods` 안의 직접 만든 파일)
+- 로더 상태와 로그: `~/Library/Application Support/omo-app-mods`. 필요 없으면 직접 지워도 돼요.
 
-## When there's no backup record
+한 모드만 빼려면 제거 대신 그 모드의 `--mod` 없이 다시 설치하거나, 설정 > 모드에서 꺼 두세요.
 
-If an `OmO.lnk` still starts the mod launcher and no backup record exists, uninstall refuses with `ICONS_STILL_RETARGETED` and removes nothing. That way you're never left with icons pointing at a launcher that's gone. [ROLLBACK.md](ROLLBACK.md) explains how to put the icons back by hand.
+## English
 
-## 한국어 요약
-
-`node tools/install.mjs --uninstall`을 실행하면 먼저 가장 최근 백업으로 아이콘을 되돌리고, 그다음 설치한 파일만 지워요.
-아이콘이 아직 모드 실행기를 가리키는데 백업 기록이 없으면 `ICONS_STILL_RETARGETED`로 멈추고 아무것도 지우지 않아요. 고치는 방법은 [ROLLBACK.md](ROLLBACK.md)에 있어요.
+Quit OmO and run `node tools/install.mjs --uninstall` from the loader checkout (repeat any `--mods-home` / `--apps-dir` you used). It removes the files in the install manifest and our `OmO Mods.app` only. State and logs in `~/Library/Application Support/omo-app-mods` stay; delete them by hand if you like.

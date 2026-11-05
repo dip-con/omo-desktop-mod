@@ -11,7 +11,7 @@ import {
   classifyProbeResults,
 } from '../loader/stop-select.mjs';
 
-const APP_DIR = 'C:/Users/alice/AppData/Local/Programs/omo';
+const APP_DIR = '/Applications/OmO.app';
 const LAUNCH = 1_000_000;
 
 const proc = (pid, exePath, createdMs, ppid = 1) => ({
@@ -24,15 +24,15 @@ const proc = (pid, exePath, createdMs, ppid = 1) => ({
 
 test('a pre-existing owner process is never selected', () => {
   const list = [
-    proc(10, `${APP_DIR}/OmO.exe`, LAUNCH - 5000),
-    proc(11, `${APP_DIR}/resources/omo-runtime/helper.exe`, LAUNCH + 10), // reused pid, same pid as pre-launch
+    proc(10, `${APP_DIR}/Contents/MacOS/OmO`, LAUNCH - 5000),
+    proc(11, `${APP_DIR}/Contents/Resources/omo-runtime/darwin-arm64/omo`, LAUNCH + 10), // reused pid, same pid as pre-launch
   ];
   const picked = selectStopTargets(list, { launchTimeMs: LAUNCH, appDir: APP_DIR, preLaunchPids: [10, 11] });
   assert.deepEqual(picked, []);
 });
 
 test('a detached runtime supervisor child created after launch is selected', () => {
-  const supervisor = proc(42, `${APP_DIR}/resources/omo-runtime/win32-x64/supervisor.exe`, LAUNCH + 800, 999);
+  const supervisor = proc(42, `${APP_DIR}/Contents/Resources/omo-runtime/darwin-arm64/supervisor`, LAUNCH + 800, 999);
   const picked = selectStopTargets([supervisor], { launchTimeMs: LAUNCH, appDir: APP_DIR, preLaunchPids: [] });
   assert.equal(picked.length, 1);
   assert.equal(picked[0].pid, 42);
@@ -42,53 +42,55 @@ test('a detached runtime supervisor child created after launch is selected', () 
 });
 
 test('a process outside appDir is never selected', () => {
-  const list = [proc(50, 'C:/Windows/System32/notepad.exe', LAUNCH + 1)];
+  const list = [proc(50, '/System/Applications/TextEdit.app/Contents/MacOS/TextEdit', LAUNCH + 1)];
   assert.deepEqual(selectStopTargets(list, { launchTimeMs: LAUNCH, appDir: APP_DIR, preLaunchPids: [] }), []);
 });
 
 test('a process created before launch is never selected', () => {
-  const list = [proc(60, `${APP_DIR}/OmO.exe`, LAUNCH - 1)];
+  const list = [proc(60, `${APP_DIR}/Contents/MacOS/OmO`, LAUNCH - 1)];
   assert.deepEqual(selectStopTargets(list, { launchTimeMs: LAUNCH, appDir: APP_DIR, preLaunchPids: [] }), []);
 });
 
 test('a sibling directory that starts with the appDir name is not matched', () => {
-  assert.equal(isUnder(`${APP_DIR}-x/OmO.exe`, APP_DIR), false);
-  assert.equal(isUnder(`${APP_DIR.toUpperCase()}\\OmO.exe`, APP_DIR), true);
-  const list = [proc(70, `${APP_DIR}-x/tool.exe`, LAUNCH + 1)];
+  assert.equal(isUnder('/Applications/OmO.app-x/Contents/MacOS/OmO', APP_DIR), false);
+  assert.equal(isUnder(`${APP_DIR}//Contents/MacOS/OmO`, APP_DIR), true);
+  const list = [proc(70, '/Applications/OmO.app-x/tool', LAUNCH + 1)];
   assert.deepEqual(selectStopTargets(list, { launchTimeMs: LAUNCH, appDir: APP_DIR, preLaunchPids: [] }), []);
 });
 
 test('stopRecordFor: no fresh row means gone before stop, not a mismatch', () => {
-  const planned = { pid: 7, exePath: 'C:/x/omo/app.exe', createdMs: 1 };
+  const planned = { pid: 7, exePath: '/x/OmO.app/Contents/MacOS/OmO', createdMs: 1 };
   assert.deepEqual(stopRecordFor(undefined, planned), { confirmed: false, goneBeforeStop: true });
 });
 
 test('stopRecordFor: a fresh row with a different creation time is a real mismatch', () => {
-  const planned = { pid: 7, exePath: 'C:/x/omo/app.exe', createdMs: 1 };
-  const fresh = { pid: 7, exePath: 'C:/x/omo/app.exe', createdMs: 2 };
+  const planned = { pid: 7, exePath: '/x/OmO.app/Contents/MacOS/OmO', createdMs: 1 };
+  const fresh = { pid: 7, exePath: '/x/OmO.app/Contents/MacOS/OmO', createdMs: 2 };
   assert.deepEqual(stopRecordFor(fresh, planned), { confirmed: false, goneBeforeStop: false });
 });
 
 test('stopRecordFor: the same process is confirmed and not gone', () => {
-  const planned = { pid: 7, exePath: 'C:/x/omo/app.exe', createdMs: 1 };
+  const planned = { pid: 7, exePath: '/x/OmO.app/Contents/MacOS/OmO', createdMs: 1 };
   assert.deepEqual(stopRecordFor({ ...planned }, planned), { confirmed: true, goneBeforeStop: false });
 });
 
 test('confirmStopTarget rejects a reused PID with a different creation time or path', () => {
-  const planned = proc(80, `${APP_DIR}/helper.exe`, LAUNCH + 100);
+  const planned = proc(80, `${APP_DIR}/Contents/Resources/helper`, LAUNCH + 100);
   assert.equal(confirmStopTarget({ ...planned }, planned), true);
   assert.equal(confirmStopTarget({ ...planned, createdMs: LAUNCH + 999 }, planned), false);
-  assert.equal(confirmStopTarget({ ...planned, exePath: 'C:/Other/helper.exe' }, planned), false);
+  assert.equal(confirmStopTarget({ ...planned, exePath: '/Other/helper' }, planned), false);
   assert.equal(confirmStopTarget(null, planned), false);
 });
 
 test('assertNoOwnerProcess throws with exitCode 4 when an owner process exists before launch', () => {
-  const owner = proc(90, `${APP_DIR}/OmO.exe`, LAUNCH - 9000);
+  const owner = proc(90, `${APP_DIR}/Contents/MacOS/OmO`, LAUNCH - 9000);
   assert.throws(
     () => assertNoOwnerProcess([owner], { appDir: APP_DIR }),
     (err) => err.exitCode === 4 && err.processes.length === 1 && err.processes[0].pid === 90,
   );
-  const other = proc(91, 'C:/Windows/System32/cmd.exe', LAUNCH - 9000);
+  const other = proc(91, '/bin/zsh', LAUNCH - 9000);
+  const elsewhere = proc(92, '/Users/alice/Downloads/OmO.app/Contents/MacOS/OmO', LAUNCH - 9000);
+  assert.throws(() => assertNoOwnerProcess([elsewhere], { appDir: APP_DIR }), (err) => err.exitCode === 4);
   assert.doesNotThrow(() => assertNoOwnerProcess([other], { appDir: APP_DIR }));
   assert.doesNotThrow(() => assertNoOwnerProcess([], { appDir: APP_DIR }));
 });

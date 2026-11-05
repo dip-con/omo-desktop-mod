@@ -40,7 +40,11 @@ export function parseModJson(raw, folderName) {
     const sp = raw.contributes.settingsPage;
     if (!isPlainObject(sp) || typeof sp.id !== 'string' || typeof sp.label !== 'string') return { ok: false, reason: 'contributes.settingsPage needs id and label' };
   }
-  if (!Array.isArray(raw.testedBuilds) || !raw.testedBuilds.every((b) => typeof b === 'string')) return { ok: false, reason: 'testedBuilds must be a string array' };
+  if (raw.testedBuilds !== undefined && !(Array.isArray(raw.testedBuilds) && raw.testedBuilds.every((b) => typeof b === 'string'))) return { ok: false, reason: 'testedBuilds must be a string array' };
+  if (raw.update !== undefined) {
+    const u = raw.update;
+    if (!isPlainObject(u) || typeof u.repo !== 'string' || u.repo === '' || (u.subdir !== undefined && typeof u.subdir !== 'string')) return { ok: false, reason: 'update needs a repo string and an optional subdir string' };
+  }
   if (!Array.isArray(raw.anchors)) return { ok: false, reason: 'anchors must be an array' };
   for (const a of raw.anchors) {
     if (!isPlainObject(a) || typeof a.selector !== 'string' || a.selector === '') return { ok: false, reason: 'each anchor needs a selector' };
@@ -87,11 +91,10 @@ export function routeMatches(route, pathname) {
 }
 
 // Decides one mod's state for one page. `present(selector)` answers whether that anchor exists now.
-// Every anchor that applies to this page is checked, whatever the build. A missing anchor switches only this mod off.
-// An unknown build with all anchors present still attaches, with reason UNKNOWN_BUILD.
-export function evaluateMod(mod, { pathname, buildKey, present }) {
+// Version agnostic: every anchor that applies to this page is checked, and the build plays no part. A missing anchor
+// switches only this mod off. This function is copied into the page as text, so it uses nothing but routeMatches.
+export function evaluateMod(mod, { pathname, present }) {
   const applicable = mod.anchors.filter((a) => routeMatches(a.route, pathname));
   if (applicable.some((a) => !present(a.selector))) return { id: mod.id, attached: false, reason: 'ANCHOR_MISSING' };
-  if (!mod.testedBuilds.includes(buildKey)) return { id: mod.id, attached: true, reason: 'UNKNOWN_BUILD' };
   return { id: mod.id, attached: true, reason: null };
 }

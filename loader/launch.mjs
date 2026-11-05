@@ -17,11 +17,11 @@ export const WAIT_FOR_VERSION_MS = 60000;
 export const NOT_RUNNING_TEXT = ALREADY_RUNNING_TEXT;
 export const FAILED_TEXT = 'OmO 모드 도우미가 실행에 실패했어요. 로그를 확인하세요.';
 
-const same = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+const same = (a, b) => a === b;
 
-// Windows executable paths compare after normalising separators and case.
+// Executable paths compare exactly, after resolving '.', '..' and doubled slashes.
 export function sameExe(a, b) {
-  return path.win32.normalize(a).toLowerCase() === path.win32.normalize(b).toLowerCase();
+  return path.resolve(a) === path.resolve(b);
 }
 
 // Violations of the home rule: the process must see the real home, and no agent-dir variable may point elsewhere.
@@ -106,7 +106,7 @@ export function parseArgs(argv) {
   return { noMods: argv.includes('--no-mods'), planOnly: argv.includes('--plan-only'), safe: argv.includes('--safe') };
 }
 
-// Plain start: OmO.exe with no arguments, once per run. `run.started` records that this run has started or attached to the app.
+// Plain start: the OmO executable with no arguments, once per run. `run.started` records that this run has started or attached to the app.
 function startPlain(deps, run) {
   deps.plainStart();
   run.started = true;
@@ -178,7 +178,7 @@ async function launchOnce({ noMods, planOnly, safe }, deps, run) {
       return 22;
     }
     if (decision.action === 'refuse') {
-      deps.messageBox('OmO.exe를 찾을 수 없어요. 설치 후 다시 실행하세요.');
+      deps.messageBox('OmO 앱을 찾을 수 없어요. 설치 후 다시 실행하세요.');
       return decision.exitCode;
     }
     const port = decision.action === 'attach' ? decision.port : await deps.pickPort();
@@ -218,7 +218,8 @@ export async function main(argv) {
 }
 
 // No top-level await here: main() imports deps.mjs, which imports this module back, and an awaited entry would deadlock.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// realpath on both sides: on macOS the temp folder /var is a link to /private/var, and import.meta.url is resolved.
+if (process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fs.realpathSync(fileURLToPath(import.meta.url))) {
   main(process.argv.slice(2)).then((code) => {
     process.exitCode = code;
   });

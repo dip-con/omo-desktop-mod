@@ -1,24 +1,28 @@
-# Install
+# Install (macOS)
 
-1. Install Node.js 24 or newer on Windows.
-2. Download and unpack this repository, then open a terminal in its folder.
-3. Run `node tools/install.mjs --with-icons --dry-run` to preview.
-4. Run `node tools/install.mjs --with-icons` to install the loader and bundled
-   mod manager without external mods. Omit `--with-icons` to leave icons alone.
-5. Quit OmO completely from the tray and launch it using your usual icon.
+Korean version: [INSTALL.ko.md](INSTALL.ko.md)
 
-To install an external mod, pass its folder containing `mod.json`:
+## Requirements
+
+- OmO at `/Applications/OmO.app` (otherwise pass `--app <bundle>`).
+- Node.js 24 or newer.
+- git, used by the update check.
+
+## Steps
 
 ```sh
-node tools/install.mjs --with-icons --mod "path/to/mod"
+git clone https://github.com/grim-susemi/omo-desktop-mod-loader omo-desktop-mod
+git clone https://github.com/grim-susemi/omo-desktop-ko-translation
+cd omo-desktop-mod
+node tools/install.mjs --mod ../omo-desktop-ko-translation/mods/ko
 ```
 
-Repeat `--mod` for additional mods. On reinstall, supply every external mod
-you want to retain; omitted previously managed mod files are removed. The
-installer refuses to overwrite foreign files or an unmanaged mod folder.
-Use `node loader/check.mjs status` while the app is open to inspect mod status.
+Use your own clone URLs if you work from the macOS fork. Keep both folders: updates copy from them.
 
-Hold Shift while launching, or pass `--safe` to the launcher, for a single
-launch without mods. For removal see [UNINSTALL.md](UNINSTALL.md).
-The app exposes a local debug port while the loader is active; other local
-programs can connect to it.
+Options: `--dry-run` writes nothing, `--mods-home <dir>` (default `~/.omo/app-mods`), `--apps-dir <dir>` (default `~/Applications`), `--no-launcher`. On reinstall, repeat `--mod` for every external mod you want to keep. `node tools/install.mjs --help` lists everything.
+
+## Launch
+
+Quit OmO first. The debug port only opens when the app starts, so the loader can't attach to a running OmO. Then open `~/Applications/OmO Mods.app` or find "OmO Mods" in Spotlight.
+
+Safe mode: hold Shift while opening it, or run `open ~/Applications/"OmO Mods.app" --args --safe`. Opening `/Applications/OmO.app` directly also starts without mods.

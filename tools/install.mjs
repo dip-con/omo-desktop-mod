@@ -1,262 +1,201 @@
 #!/usr/bin/env node
-// OmO app-mods installer: copies loader/ and mods/ into a mods home and writes the hidden-console launch.vbs.
-// By default it creates no shortcuts. --with-icons also retargets the three real OmO.lnk icons (tools/shortcuts.mjs
-// apply, backed up first). It never touches the app directory or the terminal home.
+// OmO app-mods installer (macOS): copies loader/ and the mods into a mods home and writes the "OmO Mods.app" launcher.
+// It never writes into the OmO app bundle and never starts or stops OmO.
 //
-//   node tools/install.mjs [--with-icons] [--mods-home <dir>] [--source-root <dir>] [--real-home <dir>] [--app-exe <file>] [--dry-run]
-//   node tools/install.mjs --uninstall [--mods-home <dir>] [--real-home <dir>] [--dry-run]
+//   node tools/install.mjs [--mods-home <dir>] [--apps-dir <dir>] [--app <bundle>] [--mod <dir>]... [--dry-run] [--no-launcher]
+//   node tools/install.mjs --uninstall [--mods-home <dir>] [--dry-run]
 //
 // - Everything is planned and checked before the first write. A file that already exists but is not listed in
 //   <mods-home>/_loader/install-manifest.json is never overwritten: exit 1, nothing written.
-// - Reinstall keeps a user-changed mod.json `enabled`. Files from the previous install that the new one no longer
-//   needs are removed, including the 'OmO (모드).lnk' shortcut an older install recorded.
-// - --uninstall removes exactly the manifest's files, then the manifest itself. It refuses (ICONS_STILL_RETARGETED)
-//   while any real OmO.lnk still launches the mod launcher.
-// - --source-root (default: the repo this script lives in) lets tests and dry-runs use a fixture tree.
-// - --real-home (default: the account's profile folder) is where the three real OmO.lnk icons are looked up.
+// - Reinstall keeps a user-changed mod.json `enabled`. Files (and a launcher) from the previous install that the new
+//   one no longer plans are removed.
+// - --uninstall removes exactly the manifest's files and launcher, then the manifest itself. User data stays.
+// - --source-root (default: the repo this script lives in) lets tests use a fixture tree.
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classify, readLinks } from '../mods/modmgr/host/lnk.mjs';
-import { BOX_TITLE, PLAIN_START_TEXT } from '../loader/messages.mjs';
-import { newestBackup, runShortcuts } from './shortcuts.mjs';
+import { LAUNCHER_NAME, isOurLauncher, writeLauncher } from './macapp.mjs';
 
 const DEFAULT_SOURCE_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-// The account's own profile folder. USERPROFILE is not used: the agent environment redirects it.
-const REAL_HOME = os.userInfo().homedir;
-const DEFAULT_MODS_HOME = path.join(REAL_HOME, '.omo', 'app-mods');
-const APP_EXE = path.join(REAL_HOME, 'AppData', 'Local', 'Programs', 'omo', 'OmO.exe');
+const HOME = os.userInfo().homedir;
+const DEFAULT_MODS_HOME = path.join(HOME, '.omo', 'app-mods');
+const DEFAULT_APPS_DIR = path.join(HOME, 'Applications');
+const DEFAULT_APP = '/Applications/OmO.app';
 const MANIFEST_NAME = 'install-manifest.json';
-const USAGE = `usage: node tools/install.mjs [--mod <dir>]... [--with-icons] [--mods-home <dir>] [--source-root <dir>] [--real-home <dir>] [--app-exe <file>] [--dry-run] | --uninstall
-  --mod            install an external mod directory (repeatable)
+const SKIPPED = new Set(['node_modules', 'tests', 'test']);
+const USAGE = `usage: node tools/install.mjs [--mods-home <dir>] [--apps-dir <dir>] [--app <bundle>] [--mod <dir>]... [--dry-run] [--no-launcher] | --uninstall
   --mods-home      default ${DEFAULT_MODS_HOME}
+  --apps-dir       folder for "${LAUNCHER_NAME}", default ${DEFAULT_APPS_DIR}
+  --app            OmO app bundle the launcher starts, default ${DEFAULT_APP}
+  --mod            install an external mod folder (repeatable; folder name = mod id)
   --source-root    default ${DEFAULT_SOURCE_ROOT}
-  --real-home      folder that holds the three real OmO.lnk icons, default ${REAL_HOME}
-  --app-exe        OmO.exe that launch.vbs starts when the mod helper cannot, default ${APP_EXE}
-  --with-icons     also retarget the three real OmO.lnk to the mod launcher (backup in <mods-home>/backup/<time>)
+  --no-launcher    do not write "${LAUNCHER_NAME}"
   --dry-run        print what would be written; write nothing
-  --uninstall      restore the icons from the newest backup record, then remove the files listed in the manifest
-                   (refused, nothing removed, when an icon is retargeted and no backup record exists)`;
+  --uninstall      remove the files and launcher listed in the manifest`;
 
 function parseArgs(argv) {
   const opts = {
-    modsHome: DEFAULT_MODS_HOME,
-    sourceRoot: DEFAULT_SOURCE_ROOT,
-    realHome: REAL_HOME,
-    appExe: APP_EXE,
-    dryRun: false,
-    uninstall: false,
-    withIcons: false,
-    externalMods: [],
-    help: false,
+    modsHome: DEFAULT_MODS_HOME, appsDir: DEFAULT_APPS_DIR, app: DEFAULT_APP, sourceRoot: DEFAULT_SOURCE_ROOT,
+    externalMods: [], dryRun: false, uninstall: false, launcher: true, help: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const value = () => {
       const v = argv[++i];
       if (v === undefined) throw new Error(`missing value for ${arg}`);
-      return v;
+      return path.resolve(v);
     };
-    if (arg === '--mods-home') opts.modsHome = path.resolve(value());
-    else if (arg === '--source-root') opts.sourceRoot = path.resolve(value());
-    else if (arg === '--real-home') opts.realHome = path.resolve(value());
-    else if (arg === '--app-exe') opts.appExe = path.resolve(value());
-    else if (arg === '--mod') opts.externalMods.push(path.resolve(value()));
+    if (arg === '--mods-home') opts.modsHome = value();
+    else if (arg === '--apps-dir') opts.appsDir = value();
+    else if (arg === '--app') opts.app = value();
+    else if (arg === '--source-root') opts.sourceRoot = value();
+    else if (arg === '--mod') opts.externalMods.push(value());
     else if (arg === '--dry-run') opts.dryRun = true;
     else if (arg === '--uninstall') opts.uninstall = true;
-    else if (arg === '--with-icons') opts.withIcons = true;
+    else if (arg === '--no-launcher') opts.launcher = false;
     else if (arg === '--help') opts.help = true;
     else throw new Error(`unknown argument: ${arg}`);
   }
   return opts;
 }
 
-// Relative file paths under root, skipping dot-files such as .gitkeep.
+// Relative file paths under root, skipping dot-files (.git, .gitkeep) and dependency/test folders.
 function listFiles(root, rel = '') {
   return fs.readdirSync(path.join(root, rel), { withFileTypes: true }).flatMap((entry) => {
-    if (entry.name.startsWith('.')) return [];
+    if (entry.name.startsWith('.') || SKIPPED.has(entry.name)) return [];
     const child = path.join(rel, entry.name);
     if (entry.isDirectory()) return listFiles(root, child);
     return entry.isFile() ? [child] : [];
   });
 }
 
+const isStringArray = (v) => Array.isArray(v) && v.every((s) => typeof s === 'string');
+
+function readMod(dir) {
+  const file = path.join(dir, 'mod.json');
+  if (!fs.existsSync(file)) throw new Error(`mod.json not found in ${dir}`);
+  const mod = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const id = path.basename(dir);
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id) || id === '_loader') throw new Error(`unsafe mod id: ${id}`);
+  if (mod.id !== undefined && mod.id !== id) throw new Error(`unsafe mod id: mod.json id ${mod.id} differs from folder name ${id}`);
+  if (!Array.isArray(mod.anchors) || mod.anchors.length === 0) throw new Error(`mod ${id}: mod.json has no anchors; nothing installed`);
+  if (mod.testedBuilds !== undefined && !isStringArray(mod.testedBuilds)) throw new Error(`mod ${id}: testedBuilds must be a string array`);
+  if (mod.update !== undefined && (typeof mod.update?.repo !== 'string' || typeof mod.update?.subdir !== 'string')) {
+    throw new Error(`mod ${id}: update must be {"repo": string, "subdir": string}`);
+  }
+  return { id, dir, files: listFiles(dir) };
+}
+
 function readSources(sourceRoot, externalMods) {
   const loaderRoot = path.join(sourceRoot, 'loader');
-  if (!fs.existsSync(path.join(loaderRoot, 'launch.mjs'))) throw new Error(`loader/launch.mjs not found under ${sourceRoot}`);
+  if (!fs.existsSync(path.join(loaderRoot, 'boot.mjs'))) throw new Error(`loader/boot.mjs not found under ${sourceRoot}`);
   const factsFile = path.join(sourceRoot, 'docs', 'app-facts.json');
   if (!fs.existsSync(factsFile)) throw new Error('docs/app-facts.json not found; nothing installed');
   const modsRoot = path.join(sourceRoot, 'mods');
-  const mods = (fs.existsSync(modsRoot) ? fs.readdirSync(modsRoot, { withFileTypes: true }) : []).flatMap((entry) => {
-    const dir = path.join(modsRoot, entry.name);
-    if (!entry.isDirectory() || !fs.existsSync(path.join(dir, 'mod.json'))) return [];
-    const mod = JSON.parse(fs.readFileSync(path.join(dir, 'mod.json'), 'utf8'));
-    if (!Array.isArray(mod.anchors) || mod.anchors.length === 0) {
-      throw new Error(`mod ${entry.name}: mod.json has no anchors; nothing installed`);
-    }
-    return [{ id: entry.name, dir, files: listFiles(dir) }];
-  });
+  const mods = (fs.existsSync(modsRoot) ? fs.readdirSync(modsRoot, { withFileTypes: true }) : [])
+    .filter((e) => e.isDirectory() && fs.existsSync(path.join(modsRoot, e.name, 'mod.json')))
+    .map((e) => readMod(path.join(modsRoot, e.name)));
   for (const dir of externalMods) {
-    const manifest = path.join(dir, 'mod.json');
-    if (!fs.existsSync(manifest)) throw new Error(`mod.json not found in ${dir}`);
-    const mod = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-    const id = mod?.id;
-    if (typeof id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id)
-      || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(id)) {
-      throw new Error(`unsafe mod id: ${id}`);
-    }
-    if (!Array.isArray(mod.anchors) || mod.anchors.length === 0) {
-      throw new Error(`mod ${id}: mod.json has no anchors; nothing installed`);
-    }
-    if (mods.some((m) => m.id.toLowerCase() === id.toLowerCase())) throw new Error(`duplicate mod id: ${id}`);
-    mods.push({ id, dir, files: listFiles(dir), external: true });
+    const mod = { ...readMod(dir), external: true };
+    if (mods.some((m) => m.id.toLowerCase() === mod.id.toLowerCase())) throw new Error(`duplicate mod id: ${mod.id}`);
+    mods.push(mod);
   }
   return { loaderRoot, factsFile, mods };
 }
 
-function repoCommit(sourceRoot) {
+function git(cwd, args) {
   try {
-    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
-      cwd: sourceRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+    return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
   } catch {
-    return null; // not a git checkout (a fixture tree)
+    return null; // not a git work tree, or no such remote
   }
 }
 
-// A VBScript string literal. Characters outside printable ASCII and the double quote become ChrW codes, so the file
-// reads the same under any code page wscript uses.
-function vbsString(text) {
-  return text.split(/([^\x20-\x7e]|")/u).filter((s) => s !== '')
-    .map((s) => (/^([^\x20-\x7e]|")$/u.test(s) ? `ChrW(${s.codePointAt(0)})` : `"${s}"`)).join(' & ');
-}
-
-// launch.vbs: runs node on boot.mjs hidden. When node or boot.mjs is missing or node cannot start, starts OmO plain once.
-function launchVbs({ node, boot, app }) {
-  const lines = [
-    "' Written by tools/install.mjs. Starts OmO through the mod helper; if the helper cannot start, starts OmO plain once.",
-    'Set sh = CreateObject("WScript.Shell")',
-    'Set fso = CreateObject("Scripting.FileSystemObject")',
-    `node = ${vbsString(node)}`,
-    `boot = ${vbsString(boot)}`,
-    `app = ${vbsString(app)}`,
-    'flags = ""',
-    'For Each arg In WScript.Arguments',
-    '  If arg = "--safe" Then flags = flags & " --safe"',
-    'Next',
-    'If fso.FileExists(node) And fso.FileExists(boot) Then',
-    '  On Error Resume Next',
-    '  sh.Run """" & node & """ """ & boot & """ """ & app & """" & flags, 0, False',
-    '  started = (Err.Number = 0)',
-    '  On Error GoTo 0',
-    '  If started Then WScript.Quit 0',
-    'End If',
-    'sh.Environment("PROCESS")("OMO_DESKTOP_REMOTE_DEBUGGING_PORT") = ""',
-    'sh.Run """" & app & """", 1, False',
-    'If sh.Environment("PROCESS")("OMO_LAUNCH_NO_BOX") = "" Then',
-    `  sh.Environment("PROCESS")("LOADER_MESSAGE_TEXT") = ${vbsString(PLAIN_START_TEXT)}`,
-    `  sh.Environment("PROCESS")("LOADER_MESSAGE_TITLE") = ${vbsString(BOX_TITLE)}`,
-    '  sh.Run "powershell.exe -NoProfile -Command ""Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show($env:LOADER_MESSAGE_TEXT, $env:LOADER_MESSAGE_TITLE) | Out-Null""", 0, False',
-    'End If',
-    'WScript.Quit 20',
-  ];
-  return `${lines.join('\r\n')}\r\n`;
+// Where a unit was installed from, for loader/update.mjs.
+function detectSource(dir) {
+  const repoRoot = git(dir, ['rev-parse', '--show-toplevel']);
+  if (!repoRoot) return { repoRoot: null, subdir: null, remote: null, commit: null };
+  const firstRemote = git(repoRoot, ['remote'])?.split('\n')[0];
+  const remote = git(repoRoot, ['remote', 'get-url', 'origin']) ?? (firstRemote ? git(repoRoot, ['remote', 'get-url', firstRemote]) : null);
+  const subdir = path.relative(fs.realpathSync(repoRoot), fs.realpathSync(dir)).split(path.sep).join('/');
+  return { repoRoot, subdir, remote, commit: git(repoRoot, ['rev-parse', 'HEAD']) };
 }
 
 // A reinstall keeps the enabled flag the user set in the installed mod.json.
 function modFileData(modsHome, id, rel, buf) {
-  if (rel !== 'mod.json') return buf;
   const installed = path.join(modsHome, id, 'mod.json');
-  if (!fs.existsSync(installed)) return buf;
+  if (rel !== 'mod.json' || !fs.existsSync(installed)) return buf;
   const { enabled } = JSON.parse(fs.readFileSync(installed, 'utf8'));
   const mod = JSON.parse(buf.toString('utf8'));
   if (typeof enabled === 'boolean') mod.enabled = enabled;
   return `${JSON.stringify(mod, null, 2)}\n`;
 }
 
-function planFiles(modsHome, src, meta) {
-  const loaderDir = path.join(modsHome, '_loader');
+function planFiles(modsHome, src, config) {
   return [
-    ...listFiles(src.loaderRoot).map((rel) => ({
-      rel: path.join('_loader', rel), data: fs.readFileSync(path.join(src.loaderRoot, rel)),
-    })),
+    ...listFiles(src.loaderRoot).map((rel) => ({ rel: path.join('_loader', rel), data: fs.readFileSync(path.join(src.loaderRoot, rel)) })),
     { rel: path.join('_loader', 'app-facts.json'), data: fs.readFileSync(src.factsFile) },
-    {
-      rel: path.join('_loader', 'config.json'),
-      data: `${JSON.stringify({ node: process.execPath, appExe: meta.appExe, installedAt: meta.installedAt, repoCommit: meta.repoCommit }, null, 2)}\n`,
-    },
-    {
-      rel: path.join('_loader', 'launch.vbs'),
-      data: launchVbs({ node: process.execPath, boot: path.join(loaderDir, 'boot.mjs'), app: meta.appExe }),
-    },
+    { rel: path.join('_loader', 'config.json'), data: `${JSON.stringify(config, null, 2)}\n` },
     ...src.mods.flatMap((mod) => mod.files.map((rel) => ({
-      rel: path.join(mod.id, rel),
-      data: modFileData(modsHome, mod.id, rel, fs.readFileSync(path.join(mod.dir, rel))),
+      rel: path.join(mod.id, rel), data: modFileData(modsHome, mod.id, rel, fs.readFileSync(path.join(mod.dir, rel))),
     }))),
   ];
 }
 
-function manifestPath(modsHome) {
-  return path.join(modsHome, '_loader', MANIFEST_NAME);
-}
+const manifestPath = (modsHome) => path.join(modsHome, '_loader', MANIFEST_NAME);
 
 function readManifest(modsHome) {
   const file = manifestPath(modsHome);
-  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+  if (!fs.existsSync(file)) return null;
+  const m = JSON.parse(fs.readFileSync(file, 'utf8'));
+  return { files: (m.files ?? []).map((f) => (typeof f === 'string' ? f : f.path)), launcher: m.launcher ?? null };
 }
 
-function managedPaths(modsHome, manifest) {
-  return [...manifest.files.map((rel) => path.join(modsHome, rel)), ...manifest.shortcuts];
+// Removes now-empty folders left by removed files, deepest first, never modsHome itself.
+function pruneDirs(modsHome, rels) {
+  const dirs = new Set();
+  for (const rel of rels) {
+    for (let d = path.dirname(path.join(modsHome, rel)); d.length > modsHome.length; d = path.dirname(d)) dirs.add(d);
+  }
+  for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
+    if (fs.existsSync(d) && fs.readdirSync(d).length === 0) fs.rmdirSync(d);
+  }
 }
 
-// The folders of the three icons a user pins or double-clicks, under the account's profile folder (the REAL_HOME rule).
-function realIconDirs(realHome) {
-  return {
-    desktop: path.join(realHome, 'Desktop'),
-    startMenu: path.join(realHome, 'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
-    taskbar: path.join(realHome, 'AppData', 'Roaming', 'Microsoft', 'Internet Explorer', 'Quick Launch', 'User Pinned', 'TaskBar'),
-  };
-}
-
-function realIconPaths(realHome) {
-  const dirs = realIconDirs(realHome);
-  return [dirs.desktop, dirs.startMenu, dirs.taskbar].map((dir) => path.join(dir, 'OmO.lnk'));
-}
-
-// The flags tools/shortcuts.mjs needs for the real icons, this mod home and the app folder of opts.appExe.
-function iconFlags(opts) {
-  const dirs = realIconDirs(opts.realHome);
-  return ['--desktop-dir', dirs.desktop, '--start-menu-dir', dirs.startMenu, '--taskbar-dir', dirs.taskbar,
-    '--mods-home', opts.modsHome, '--app-dir', path.dirname(opts.appExe)];
-}
-
-async function install(opts) {
-  const { modsHome, sourceRoot, appExe, dryRun } = opts;
-  const src = readSources(sourceRoot, opts.externalMods);
+function install(opts) {
+  const { modsHome, dryRun } = opts;
+  const src = readSources(opts.sourceRoot, opts.externalMods);
   const prev = readManifest(modsHome);
   for (const mod of src.mods.filter((m) => m.external)) {
     const dest = path.join(modsHome, mod.id);
-    const prefix = `${mod.id}${path.sep}`;
-    if (fs.existsSync(dest) && !prev?.files.some((rel) => rel.startsWith(prefix))) {
+    if (fs.existsSync(dest) && !prev?.files.some((rel) => rel.startsWith(`${mod.id}${path.sep}`))) {
       throw new Error(`not created by this installer, refusing to overwrite folder: ${dest}`);
     }
   }
-  const meta = { installedAt: new Date().toISOString(), repoCommit: repoCommit(sourceRoot), appExe };
-  const files = planFiles(modsHome, src, meta);
-  const managed = new Set(prev ? managedPaths(modsHome, prev) : []);
-  const wantedFiles = files.map((f) => path.join(modsHome, f.rel));
-  const foreign = wantedFiles.filter((p) => fs.existsSync(p) && !managed.has(p));
-  if (foreign.length > 0) {
-    throw new Error(`not created by this installer, refusing to overwrite:\n  ${foreign.join('\n  ')}`);
+  const launcher = opts.launcher ? path.join(opts.appsDir, LAUNCHER_NAME) : null;
+  if (launcher && fs.existsSync(launcher) && prev?.launcher !== launcher && !isOurLauncher(launcher)) {
+    throw new Error(`not created by this installer, refusing to overwrite: ${launcher}`);
   }
+  const sources = Object.fromEntries([
+    ['_loader', detectSource(src.loaderRoot)],
+    ...src.mods.map((mod) => [mod.id, detectSource(mod.dir)]),
+  ]);
+  const installedAt = new Date().toISOString();
+  const config = { node: process.execPath, appBundle: opts.app, installedAt, repoCommit: sources._loader.commit };
+  const files = planFiles(modsHome, src, config);
+  const managed = new Set((prev?.files ?? []).map((rel) => path.join(modsHome, rel)));
+  const wanted = files.map((f) => path.join(modsHome, f.rel));
+  const foreign = wanted.filter((p) => fs.existsSync(p) && !managed.has(p));
+  if (foreign.length > 0) throw new Error(`not created by this installer, refusing to overwrite:\n  ${foreign.join('\n  ')}`);
+  if (!fs.existsSync(path.join(opts.app, 'Contents', 'MacOS', 'OmO'))) console.warn(`warning: ${opts.app}/Contents/MacOS/OmO not found`);
 
   if (dryRun) {
     console.log(`dry-run: would write under ${modsHome}`);
-    for (const p of wantedFiles) console.log(`  file ${p}`);
-    console.log(`  file ${manifestPath(modsHome)}`);
-    if (opts.withIcons) console.log('dry-run: then tools/shortcuts.mjs apply retargets the three real OmO.lnk (backup in <mods-home>/backup/<time>)');
+    for (const p of [...wanted, manifestPath(modsHome)]) console.log(`  file ${p}`);
+    if (launcher) console.log(`  launcher ${launcher}`);
     console.log('dry-run: nothing written');
     return;
   }
@@ -266,68 +205,49 @@ async function install(opts) {
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, f.data);
   }
-  const stale = prev ? managedPaths(modsHome, prev).filter((p) => !wantedFiles.includes(p)) : [];
-  for (const p of stale) fs.rmSync(p, { force: true });
-  fs.writeFileSync(manifestPath(modsHome), `${JSON.stringify({
-    version: 1,
-    installedAt: meta.installedAt,
-    repoCommit: meta.repoCommit,
-    files: files.map((f) => f.rel),
-    shortcuts: [],
-  }, null, 2)}\n`);
-  console.log(`installed ${files.length} files into ${modsHome}`);
-  if (opts.withIcons) {
-    const code = await runShortcuts(['apply', ...iconFlags(opts)]);
-    if (code !== 0) throw new Error(`mods installed, but the icons were not retargeted (shortcuts apply exit ${code})`);
+  const staleRels = (prev?.files ?? []).filter((rel) => !wanted.includes(path.join(modsHome, rel)));
+  for (const rel of staleRels) fs.rmSync(path.join(modsHome, rel), { force: true });
+  pruneDirs(modsHome, staleRels);
+  if (prev?.launcher && prev.launcher !== launcher && isOurLauncher(prev.launcher)) fs.rmSync(prev.launcher, { recursive: true, force: true });
+  if (launcher) {
+    fs.mkdirSync(opts.appsDir, { recursive: true });
+    for (const w of writeLauncher({ app: launcher, node: process.execPath, modsHome, appBundle: opts.app })) console.warn(`warning: ${w}`);
   }
+  const sha256 = Object.fromEntries(files.map((f) => [f.rel, crypto.createHash('sha256').update(f.data).digest('hex')]));
+  fs.writeFileSync(manifestPath(modsHome), `${JSON.stringify({
+    version: 2, installedAt, repoCommit: config.repoCommit, files: files.map((f) => f.rel), sha256, launcher, sources,
+  }, null, 2)}\n`);
+  console.log(`installed ${files.length} files into ${modsHome}${launcher ? ` and ${launcher}` : ''}`);
 }
 
-async function uninstall(opts) {
-  const { modsHome, realHome, dryRun } = opts;
-  const infos = await readLinks(realIconPaths(realHome));
-  const retargeted = infos.filter((info) => classify(info, path.dirname(APP_EXE)) === 'mod').map((info) => info.path);
-  if (retargeted.length > 0) {
-    // The icons go back first, from the newest backup record. Nothing else is removed unless they are back.
-    const backup = newestBackup(modsHome);
-    if (!backup) {
-      throw new Error(`ICONS_STILL_RETARGETED: ${retargeted.join(', ')} still launch the mod launcher and ${path.join(modsHome, 'backup')} holds no backup record; `
-        + 'restore them by hand (see ROLLBACK.md). Nothing removed.');
-    }
-    const code = await runShortcuts(['restore', ...iconFlags(opts), '--backup-dir', backup, ...(dryRun ? ['--dry-run'] : [])]);
-    if (code !== 0) throw new Error(`icons not restored (shortcuts restore exit ${code}); nothing removed`);
-  }
+function uninstall({ modsHome, dryRun }) {
   const prev = readManifest(modsHome);
   if (!prev) {
     console.log(`nothing to uninstall: ${manifestPath(modsHome)} not present`);
     return;
   }
-  const targets = [...managedPaths(modsHome, prev), manifestPath(modsHome)];
+  const targets = [...prev.files.map((rel) => path.join(modsHome, rel)), manifestPath(modsHome)];
+  const launcher = prev.launcher && isOurLauncher(prev.launcher) ? prev.launcher : null;
   if (dryRun) {
-    for (const p of targets) console.log(`would remove ${p}`);
+    for (const p of [...targets, ...(launcher ? [launcher] : [])]) console.log(`would remove ${p}`);
     return;
   }
   for (const p of targets) fs.rmSync(p, { force: true });
-  const dirs = new Set();
-  for (const rel of prev.files) {
-    for (let d = path.dirname(path.join(modsHome, rel)); d.length > modsHome.length; d = path.dirname(d)) dirs.add(d);
-  }
-  for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
-    if (fs.existsSync(d) && fs.readdirSync(d).length === 0) fs.rmdirSync(d);
-  }
-  console.log(`removed ${targets.length} managed paths from ${modsHome}`);
+  if (launcher) fs.rmSync(launcher, { recursive: true, force: true });
+  pruneDirs(modsHome, [...prev.files, path.join('_loader', MANIFEST_NAME)]);
+  console.log(`removed ${targets.length} managed files from ${modsHome}${launcher ? ` and ${launcher}` : ''}`);
 }
 
-async function main() {
+function main() {
   try {
     const opts = parseArgs(process.argv.slice(2));
     if (opts.help) console.log(USAGE);
-    else if (opts.withIcons && opts.uninstall) throw new Error('--with-icons and --uninstall cannot be used together');
-    else if (opts.uninstall) await uninstall(opts);
-    else await install(opts);
+    else if (opts.uninstall) uninstall(opts);
+    else install(opts);
   } catch (err) {
     console.error(`omo-app-mods install: ${err.message}`);
     process.exitCode = 1;
   }
 }
 
-await main();
+main();

@@ -52,7 +52,9 @@ function forms(p) {
 const HOMES = new Set([os.homedir(), os.userInfo().homedir]);
 const OMO_ROOTS = [...HOMES].flatMap((home) => forms(path.join(home, OMO_PREFIX)));
 const LIVE_ICONS = [...HOMES].flatMap((home) => LIVE_ICON_TAILS.map((tail) => path.join(home, ...tail)));
-const LIVE_ROOTS = [...OMO_ROOTS, ...LIVE_ICONS.map(slash)];
+// macOS: the installed app bundle and the loader's default state folder are live as well.
+const MAC_LIVE = ['/Applications/OmO.app', ...[...HOMES].map((home) => path.join(home, 'Library', 'Application Support', 'omo-app-mods'))];
+const LIVE_ROOTS = [...OMO_ROOTS, ...LIVE_ICONS.map(slash), ...MAC_LIVE.flatMap(forms)];
 
 const within = (inner, outer) => inner === outer || inner.startsWith(outer + '/');
 

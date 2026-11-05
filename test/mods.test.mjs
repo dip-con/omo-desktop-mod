@@ -41,11 +41,11 @@ function writeMod(modsRoot, folder, raw) {
 
 test('installed loader finds mods beside its _loader folder, dev loader finds REPO/mods', () => {
   // Given: an installed loader folder and a development loader folder
-  const installed = path.join('C:', 'mods-home', '_loader');
-  const dev = path.join('C:', 'repo', 'loader');
+  const installed = path.join('/Users/alice', '.omo', 'app-mods', '_loader');
+  const dev = path.join('/src', 'repo', 'loader');
   // When/Then: the mods root is the parent of _loader, or REPO/mods in development
-  assert.equal(modsRootFor(installed), path.join('C:', 'mods-home'));
-  assert.equal(modsRootFor(dev), path.join('C:', 'repo', 'mods'));
+  assert.equal(modsRootFor(installed), path.join('/Users/alice', '.omo', 'app-mods'));
+  assert.equal(modsRootFor(dev), path.join('/src', 'repo', 'mods'));
 });
 
 test('discovery returns valid mods sorted by order and skips _loader', () => {
@@ -164,20 +164,33 @@ test('an anchor for another route is not checked on this page', () => {
   assert.equal(result.attached, true);
 });
 
-test('all anchors present and an untested build attaches with UNKNOWN_BUILD', () => {
-  // Given
-  const mod = parseModJson(validMod('ko', { testedBuilds: ['build-a'] }), 'ko').mod;
-  // When
-  const result = evaluateMod(mod, { pathname: '/', buildKey: 'build-z', present: () => true });
-  // Then
-  assert.deepEqual(result, { id: 'ko', attached: true, reason: 'UNKNOWN_BUILD' });
+test('all anchors present attaches with no reason on any build, listed in testedBuilds or not', () => {
+  // Given: one mod that lists build-a, and one without testedBuilds at all
+  const listed = parseModJson(validMod('ko', { testedBuilds: ['build-a'] }), 'ko').mod;
+  const bare = validMod('bare');
+  delete bare.testedBuilds;
+  const unlisted = parseModJson(bare, 'bare').mod;
+  // When/Then: the build key plays no part
+  for (const buildKey of ['build-a', 'build-z', undefined]) {
+    assert.deepEqual(evaluateMod(listed, { pathname: '/', buildKey, present: () => true }), { id: 'ko', attached: true, reason: null });
+    assert.deepEqual(evaluateMod(unlisted, { pathname: '/', buildKey, present: () => true }), { id: 'bare', attached: true, reason: null });
+  }
 });
 
-test('all anchors present on a tested build attaches with no reason', () => {
-  // Given
-  const mod = parseModJson(validMod('ko', { testedBuilds: ['build-a'] }), 'ko').mod;
-  // When/Then
-  assert.deepEqual(evaluateMod(mod, { pathname: '/', buildKey: 'build-a', present: () => true }), { id: 'ko', attached: true, reason: null });
+test('testedBuilds is optional, but must be a string array when present', () => {
+  const bare = validMod('bare');
+  delete bare.testedBuilds;
+  assert.equal(parseModJson(bare, 'bare').ok, true);
+  assert.equal(parseModJson(validMod('num', { testedBuilds: [1] }), 'num').ok, false);
+  assert.equal(parseModJson(validMod('str', { testedBuilds: 'build-a' }), 'str').ok, false);
+});
+
+test('update is optional, and needs a repo string and an optional subdir string', () => {
+  assert.equal(parseModJson(validMod('u1', { update: { repo: 'https://example.com/ko.git', subdir: 'mods/ko' } }), 'u1').ok, true);
+  assert.equal(parseModJson(validMod('u2', { update: { repo: '/src/ko' } }), 'u2').ok, true);
+  assert.equal(parseModJson(validMod('u3', { update: { subdir: 'mods/ko' } }), 'u3').ok, false);
+  assert.equal(parseModJson(validMod('u4', { update: { repo: '/src/ko', subdir: 3 } }), 'u4').ok, false);
+  assert.equal(parseModJson(validMod('u5', { update: 'https://example.com/ko.git' }), 'u5').ok, false);
 });
 
 test('a locked mod stays active when enabled is false, and an unlocked one is switched off', () => {

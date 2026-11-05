@@ -1,24 +1,46 @@
-# 설치 안내
+# 설치 (macOS)
 
-1. Windows에 Node.js 24 이상을 설치합니다.
-2. 이 저장소를 내려받아 압축을 풀고 해당 폴더에서 터미널을 엽니다.
-3. `node tools/install.mjs --with-icons --dry-run`으로 설치 내용을 확인합니다.
-4. `node tools/install.mjs --with-icons`를 실행합니다. 로더와 내장 모드
-   관리자가 설치되며 외부 모드는 필수가 아닙니다. 아이콘을 바꾸지 않으려면
-   `--with-icons`를 빼세요.
-5. 트레이에서 OmO를 완전히 종료한 뒤 평소 아이콘으로 실행합니다.
+## 준비
 
-`mod.json`이 들어 있는 외부 모드는 다음처럼 추가합니다.
+- OmO 데스크톱 앱이 `/Applications/OmO.app`에 있어야 해요. 다른 곳에 있으면 `--app <경로>`로 알려 주세요.
+- Node.js 24 이상. `node --version`으로 확인해요.
+- git (업데이트 기능이 원본 저장소를 읽어요).
+
+## 1. 저장소 받기
 
 ```sh
-node tools/install.mjs --with-icons --mod "모드 폴더 경로"
+git clone https://github.com/grim-susemi/omo-desktop-mod-loader omo-desktop-mod
+git clone https://github.com/grim-susemi/omo-desktop-ko-translation
+cd omo-desktop-mod
 ```
 
-여러 모드는 `--mod`를 반복합니다. 재설치할 때 유지할 외부 모드를 모두
-지정하세요. 이전에 관리한 모드 중 생략된 파일은 제거됩니다. 설치 도구는
-관리하지 않는 모드 폴더나 파일을 덮어쓰지 않습니다.
-앱 실행 중 `node loader/check.mjs status`로 상태를 확인할 수 있습니다.
+macOS판을 쓰는 중이라면 각자 받은 저장소 주소로 바꿔 주세요. 두 폴더는 지우지 마세요. 업데이트할 때 여기서 새 파일을 가져와요.
 
-Shift를 누른 채 실행하거나 실행기에 `--safe`를 전달하면 한 번 모드 없이
-실행합니다. 제거 방법은 [UNINSTALL.md](UNINSTALL.md)를 보세요. 로더가
-실행 중일 때 앱의 로컬 디버그 포트에 같은 PC의 다른 프로그램도 접근할 수 있습니다.
+## 2. 설치하기
+
+```sh
+node tools/install.mjs --mod ../omo-desktop-ko-translation/mods/ko
+```
+
+- 미리 보기만 하려면 `--dry-run`을 붙여요. 아무것도 쓰지 않아요.
+- 설치 위치는 `~/.omo/app-mods`예요. 바꾸려면 `--mods-home <폴더>`.
+- 실행용 앱 `OmO Mods.app`은 `~/Applications`에 만들어져요. 바꾸려면 `--apps-dir <폴더>`, 만들지 않으려면 `--no-launcher`.
+- 다시 설치할 때는 남겨 둘 외부 모드마다 `--mod`를 다시 넣어 주세요. 빠진 모드의 파일은 지워져요. 켜고 끈 설정은 유지돼요.
+- 전체 옵션: `node tools/install.mjs --help`
+
+## 3. 실행하기
+
+1. **OmO를 먼저 완전히 종료하세요** (메뉴 막대에서 종료, 또는 Cmd+Q). 디버그 포트는 앱이 시작될 때만 열려서, 이미 떠 있는 OmO에는 모드를 붙일 수 없어요.
+2. `~/Applications/OmO Mods.app`을 열어요. Spotlight에서 "OmO Mods"로 찾아도 돼요. Dock에 고정해 두면 편해요.
+3. 설정 > 모드에 로더와 모드 목록이 보이면 된 거예요.
+
+## 안전 모드
+
+모드 때문에 화면이 이상하면 모드 없이 시작해요.
+
+- Shift를 누른 채 `OmO Mods.app`을 열어요.
+- 또는 터미널에서: `open ~/Applications/"OmO Mods.app" --args --safe`
+
+평소처럼 `/Applications/OmO.app`을 직접 열어도 모드 없이 시작돼요.
+
+다음 문서: [UPDATE.md](UPDATE.md), [UNINSTALL.md](UNINSTALL.md)

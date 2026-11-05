@@ -5,11 +5,11 @@ import { BOX_TITLE as bootBoxTitle, failOpen, PLAIN_START_TEXT as bootPlainStart
 import { PORT_VAR } from '../loader/launch.mjs';
 import { BOX_TITLE, PLAIN_START_TEXT } from '../loader/messages.mjs';
 
-test('the fallback starts OmO plain once, with no arguments and without the debug-port variable, and exits 20', async () => {
+test('the fallback starts the bundle executable plain once, with no arguments and without the debug-port variable, and exits 20', async () => {
   const spawned = [];
   const boxes = [];
-  const env = { PATH: 'C:\\Windows', [PORT_VAR]: '41234', OMO_PROFILE: 'work' };
-  const code = await failOpen('C:/app/OmO.exe', {
+  const env = { PATH: '/usr/bin', [PORT_VAR]: '41234', OMO_PROFILE: 'work' };
+  const code = await failOpen('/tmp/fake/OmO.app', {
     env,
     spawn: (exe, args, opts) => {
       spawned.push({ exe, args, opts });
@@ -20,7 +20,7 @@ test('the fallback starts OmO plain once, with no arguments and without the debu
   });
   assert.equal(code, 20);
   assert.equal(spawned.length, 1);
-  assert.equal(spawned[0].exe, 'C:/app/OmO.exe');
+  assert.equal(spawned[0].exe, '/tmp/fake/OmO.app/Contents/MacOS/OmO');
   assert.deepEqual(spawned[0].args, []);
   assert.equal(PORT_VAR in spawned[0].opts.env, false);
   assert.equal(spawned[0].opts.env.OMO_PROFILE, 'work');
@@ -40,9 +40,9 @@ test('the fallback texts in boot.mjs match messages.mjs code point for code poin
 test('a fallback after a start that already happened starts nothing, shows nothing and exits 6', async () => {
   const spawned = [];
   const boxes = [];
-  const code = await failOpen('C:/app/OmO.exe', {
+  const code = await failOpen('/tmp/fake/OmO.app', {
     started: true,
-    env: { PATH: 'C:\\Windows' },
+    env: { PATH: '/usr/bin' },
     spawn: (exe, args, opts) => {
       spawned.push({ exe, args, opts });
       return { on() {}, unref() {} };

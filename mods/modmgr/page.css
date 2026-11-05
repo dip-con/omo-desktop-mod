@@ -428,57 +428,63 @@
   font-weight: var(--mm-medium);
 }
 
-/* Icon status: a section title and a three-column table on the settings surface, with neutral hairlines between rows. */
-.mm-icons {
+/* Update card: the settings surface again, in one column: the title and its line, the rows of the last check, apply
+   errors no row carries, and the buttons at the trailing end. */
+.mm-update {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.mm-update-rows {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--mm-surface-line);
+  list-style: none;
+}
+
+/* One row per mod: name, id and status on one line, wrapping when the status is long; hairlines between rows. */
+.mm-update-row {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--mm-space) * .5) calc(var(--mm-space) * 2);
+  padding: calc(var(--mm-space) * 2) 0;
+}
+
+.mm-update-row + .mm-update-row {
+  border-top: 1px solid var(--mm-surface-line);
+}
+
+.mm-update-mod {
+  font-weight: var(--mm-medium);
+}
+
+.mm-update-id {
+  color: var(--mm-muted);
+  font-size: var(--mm-fs-small);
+}
+
+.mm-update-errors {
+  display: grid;
+  gap: calc(var(--mm-space) * 1);
+}
+
+.mm-update-actions {
+  flex-wrap: wrap;
   gap: calc(var(--mm-space) * 2);
 }
 
-.mm-section-title {
-  margin: 0;
-  font-size: var(--mm-fs-title);
-  font-weight: var(--mm-semibold);
+/* A button's label and its busy label share one slot, so the box keeps its size while the call runs. */
+.mm-btn-swap {
+  display: grid;
 }
 
-.mm-surface {
-  overflow: hidden;
-  border: 1px solid var(--mm-surface-line);
-  border-radius: var(--mm-radius);
-  background: var(--mm-surface);
+.mm-btn-swap > span {
+  grid-area: 1 / 1;
 }
 
-.mm-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.mm-table th,
-.mm-table td {
-  padding: calc(var(--mm-space) * 2.5) calc(var(--mm-space) * 4);
-  border-bottom: 1px solid var(--mm-surface-line);
-  font-weight: inherit;
-  text-align: left;
-  vertical-align: middle;
-}
-
-.mm-table thead th {
-  padding-block: calc(var(--mm-space) * 2);
-  color: var(--mm-muted);
-  font-size: var(--mm-fs-small);
-  font-weight: var(--mm-medium);
-}
-
-.mm-table tbody th {
-  font-weight: var(--mm-medium);
-}
-
-.mm-table tbody tr:last-child > * {
-  border-bottom: 0;
-}
-
-.mm-none {
-  color: var(--mm-muted);
+.mm-btn-swap > [data-off] {
+  visibility: hidden;
 }
 
 /* Controls. */
@@ -500,17 +506,18 @@
   transition: background-color var(--mm-dur) var(--mm-ease), transform var(--mm-dur) var(--mm-ease);
 }
 
-.mm-btn:hover:not(:disabled) {
+.mm-btn:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--mm-wash);
 }
 
-.mm-btn:active:not(:disabled) {
+.mm-btn:active:not(:disabled):not([aria-disabled="true"]) {
   background: var(--mm-press);
   transform: scale(.97);
 }
 
-/* Disabled: no fill and the muted ink, still AA-legible in both themes. */
-.mm-btn:disabled {
+/* Disabled, or waiting (aria-disabled): no fill and the muted ink, still AA-legible in both themes. */
+.mm-btn:disabled,
+.mm-btn[aria-disabled="true"] {
   border-color: var(--mm-surface-line);
   background: transparent;
   color: var(--mm-muted);
@@ -527,16 +534,17 @@
   color: var(--mm-primary-fg);
 }
 
-.mm-btn-primary:disabled {
+.mm-btn-primary:disabled,
+.mm-btn-primary[aria-disabled="true"] {
   border-color: transparent;
   background: var(--mm-wash);
 }
 
-.mm-btn-primary:hover:not(:disabled) {
+.mm-btn-primary:hover:not(:disabled):not([aria-disabled="true"]) {
   background: color-mix(in oklab, var(--mm-primary) 86%, var(--mm-fg));
 }
 
-.mm-btn-primary:active:not(:disabled) {
+.mm-btn-primary:active:not(:disabled):not([aria-disabled="true"]) {
   background: color-mix(in oklab, var(--mm-primary) 72%, var(--mm-fg));
 }
 
@@ -674,7 +682,7 @@
     transform: none;
   }
 
-  .mm-btn:active:not(:disabled) {
+  .mm-btn:active:not(:disabled):not([aria-disabled="true"]) {
     transform: none;
   }
 }

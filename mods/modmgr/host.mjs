@@ -1,12 +1,12 @@
 // Host side of the locked built-in mod modmgr (Settings > 모드). The loader imports this module and calls
 // handle(method, args) for each bridge call. list() reads every installed mod.json and the loader's state.json.
 // setEnabled() changes the one `enabled` token of one unlocked mod.json, after a stale check and a verified backup.
+// checkUpdates() and applyUpdates() delegate to the loader's update.mjs for this mods folder.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { atomicWriteText, sha256 } from './host/fsx-lite.mjs';
-import { classify, readLinks as readLinksReal } from './host/lnk.mjs';
 
 const MODMGR_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_MODS_ROOT = path.dirname(MODMGR_DIR);
@@ -16,6 +16,11 @@ const LOADER_MODS = [
   path.join(MODMGR_DIR, '..', '..', 'loader', 'mods.mjs'),
 ];
 const { discoverMods } = await import(pathToFileURL(LOADER_MODS.find((file) => fs.existsSync(file))).href);
+// update.mjs, by the same rule, for the mods folder the host serves.
+const loaderUpdate = (modsRoot) => {
+  const file = [path.join(modsRoot, '_loader', 'update.mjs'), path.join(MODMGR_DIR, '..', '..', 'loader', 'update.mjs')].find((f) => fs.existsSync(f));
+  return file ? import(pathToFileURL(file).href) : Promise.reject(new Error('update.mjs not found'));
+};
 
 // The reasons the loader writes to state.json (loader/deps.mjs, loader/inject.mjs), in Korean for the page.
 const REASON_KO = {
@@ -35,29 +40,17 @@ function statusOf(mod, entry) {
   const switchedOff = (mod.enabled === false && !mod.locked) || entry?.reason === 'DISABLED';
   if (switchedOff) return { status: '꺼짐', reasonKo: '' };
   if (!entry) return { status: '아직 확인 전', reasonKo: '' };
-  if (entry.attached) return { status: entry.reason === 'UNKNOWN_BUILD' ? '붙음: 확인 안 된 앱 버전' : '붙음', reasonKo: '' };
+  if (entry.attached) return { status: '붙음', reasonKo: '' };
   return { status: '못 붙음', reasonKo: REASON_KO[entry.reason] ?? String(entry.reason) };
 }
 
-// Same rule as loader/deps.mjs: LOADER_STATE_DIR first, else %LOCALAPPDATA%\omo-app-mods.
-function defaultStateFile() {
-  const dir = process.env.LOADER_STATE_DIR || path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'), 'omo-app-mods');
+// Same rule as loader/deps.mjs defaultStateDir(): LOADER_STATE_DIR first, else ~/Library/Application Support/omo-app-mods.
+export function defaultStateFile() {
+  const dir = process.env.LOADER_STATE_DIR || path.join(os.homedir(), 'Library', 'Application Support', 'omo-app-mods');
   return path.join(dir, 'state.json');
 }
 
-// The icons tools/shortcuts.mjs manages, under the account's own profile folder (the tools/install.mjs REAL_HOME rule:
-// os.userInfo().homedir, never USERPROFILE, which the agent environment redirects), and the app folder classify needs.
-export function defaultShortcutDirs(home = os.userInfo().homedir) {
-  const roaming = path.join(home, 'AppData', 'Roaming');
-  return {
-    desktop: path.join(home, 'Desktop'),
-    startMenu: path.join(roaming, 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
-    taskbar: path.join(roaming, 'Microsoft', 'Internet Explorer', 'Quick Launch', 'User Pinned', 'TaskBar'),
-    appDir: path.join(home, 'AppData', 'Local', 'Programs', 'omo'),
-  };
-}
-
-export function createModmgrHost({ modsRoot = DEFAULT_MODS_ROOT, stateFile = defaultStateFile(), shortcutDirs = null, readLinks = readLinksReal } = {}) {
+export function createModmgrHost({ modsRoot = DEFAULT_MODS_ROOT, stateFile = defaultStateFile() } = {}) {
   const modJsonOf = (id) => path.join(modsRoot, id, 'mod.json');
 
   function readStateMods() {
@@ -126,60 +119,20 @@ export function createModmgrHost({ modsRoot = DEFAULT_MODS_ROOT, stateFile = def
     return { ok: true, id, enabled: on, changed: true, backup, sha256: sha256(fs.readFileSync(file)) };
   }
 
-  // Read only: the three OmO.lnk (tools/shortcuts.mjs labels), classified by
-  // lnk.mjs (mod / plain / other / missing). One PowerShell read for all three, asynchronous, inside lnk.mjs's own
-  // timeout. A missing, unreadable or foreign file is that row's state; the call still answers ok.
-  // Cache rule: the answer is kept while every icon file has the same size and mtime (or stays missing), checked
-  // with a stat per call; any change, and any read that failed as a whole, makes the next call read again.
-  const dirs = shortcutDirs ?? defaultShortcutDirs();
-  const links = [
-    { label: 'desktop', path: path.join(dirs.desktop, 'OmO.lnk') },
-    { label: 'startmenu', path: path.join(dirs.startMenu, 'OmO.lnk') },
-    { label: 'taskbar', path: path.join(dirs.taskbar, 'OmO.lnk') },
-  ];
-  let cache = null;
-  const signature = () => links.map((link) => {
-    try {
-      const stat = fs.statSync(link.path);
-      return `${stat.size}:${stat.mtimeMs}`;
-    } catch {
-      return '-';
-    }
-  }).join('|');
-
-  async function readShortcuts() {
-    let infos;
-    let failed = false;
-    try {
-      infos = await readLinks(links.map((link) => link.path));
-    } catch (error) {
-      failed = true;
-      infos = links.map((link) => (fs.existsSync(link.path) ? { exists: true, error: `READ_FAILED: ${error.message}` } : { exists: false }));
-    }
-    const shortcuts = links.map((link, i) => {
-      const info = infos[i] ?? { exists: false };
-      return {
-        label: link.label, path: link.path, kind: classify(info, dirs.appDir), error: info.error ?? null, target: info.target ?? null,
-        args: info.args ?? null, workdir: info.workdir ?? null, icon: info.icon ?? null, aumid: info.aumid ?? null, description: info.description ?? null,
-      };
-    });
-    return { failed, answer: { ok: true, shortcuts } };
+  // Compares each installed folder with its install source; changes nothing.
+  async function checkUpdates() {
+    return (await loaderUpdate(modsRoot)).checkUpdates({ modsHome: modsRoot });
   }
 
-  function shortcuts() {
-    const key = signature();
-    if (!cache || cache.key !== key) {
-      const entry = { key, promise: null };
-      entry.promise = readShortcuts().then(({ failed, answer }) => {
-        if (failed && cache === entry) cache = null;
-        return answer;
-      });
-      cache = entry;
+  // Copies changed sources in (optionally after git pull --ff-only); mod.json "enabled" values are kept.
+  async function applyUpdates({ ids, pull = false } = {}) {
+    if ((ids !== undefined && (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string'))) || typeof pull !== 'boolean') {
+      return refusal('BAD_ARGS', 'applyUpdates needs {ids?: string[], pull?: boolean}');
     }
-    return cache.promise;
+    return (await loaderUpdate(modsRoot)).applyUpdates({ modsHome: modsRoot, ids, pull });
   }
 
-  const methods = { list, setEnabled, shortcuts };
+  const methods = { list, setEnabled, checkUpdates, applyUpdates };
   // Bridge entry: a refusal is a value the page renders; a throw or a rejected promise becomes one too.
   function handle(method, args = []) {
     if (!Object.hasOwn(methods, method)) return refusal('UNKNOWN_METHOD', `unknown method ${method}`);
@@ -192,7 +145,7 @@ export function createModmgrHost({ modsRoot = DEFAULT_MODS_ROOT, stateFile = def
     }
   }
 
-  return { list, setEnabled, shortcuts, handle };
+  return { list, setEnabled, checkUpdates, applyUpdates, handle };
 }
 
 // The loader's entry point: the host reads the loader's own state file and its mods folder.

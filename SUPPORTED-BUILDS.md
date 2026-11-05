@@ -1,13 +1,9 @@
-# Supported builds
+# 버전 호환
 
-The loader identifies a build by a key computed from the app version, the client bundle hash, the runtime ref and sha, and the plugin hash (`loader/fingerprint.mjs`). A mod lists the keys it was tested on in `testedBuilds` in its `mod.json`.
+지원 빌드 목록은 따로 두지 않아요. 모드가 붙을지는 앵커가 정해요. 실행할 때마다 로더가 각 모드의 `anchors`(화면의 특정 요소)를 찾아보고, 있으면 붙이고 없으면 그 모드만 끄고 `ANCHOR_MISSING`으로 알려요. 그래서 OmO가 업데이트돼도 화면 구조가 그대로면 모드는 계속 동작해요.
 
-| OmO version | Build key | Mod tested |
-| --- | --- | --- |
-| 2026.1102.3 | `9ae0f822a89fb040d965883a6db99db062a1dc2f4c125506f51bca9f4e04faf8` | modmgr |
+`mod.json`의 `testedBuilds`는 이제 선택 항목이고, 비어 있거나 없어도 모드는 똑같이 붙어요. 업데이트 뒤 모드가 꺼졌다면 `node loader/check.mjs status --json`으로 이유를 확인하고, 모드 저장소의 새 버전을 [UPDATE.md](UPDATE.md) 방법으로 받아 보세요.
 
-On other builds, a mod may report `UNKNOWN_BUILD` until its maintainer tests the build.
+## English
 
-## 한국어 요약
-
-시험한 빌드는 OmO 2026.1102.3이에요. 다른 빌드에서도 모드는 붙지만 `UNKNOWN_BUILD`로 나오고, 업데이트 뒤 확인 순서를 마치면 시험한 빌드로 기록돼요.
+There's no supported-build list. Anchors decide: a mod attaches when its anchor elements exist on screen and is switched off with `ANCHOR_MISSING` when they don't. `testedBuilds` is optional and doesn't affect attaching.

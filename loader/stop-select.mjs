@@ -1,7 +1,7 @@
 // Pure selection logic for the QA app probe. No I/O here: callers pass process records
 // ({ pid, ppid, exePath, commandLine, createdMs }) and get decisions back, so tests use fake lists.
 
-const normPath = (p) => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+const normPath = (p) => String(p ?? '').replace(/\/+/g, '/').replace(/\/+$/, '');
 
 // True only when exePath is inside appDir; the trailing separator keeps 'omo-x' out of 'omo'.
 export function isUnder(exePath, appDir) {
@@ -9,7 +9,8 @@ export function isUnder(exePath, appDir) {
   return normPath(exePath).startsWith(normPath(appDir) + '/');
 }
 
-const baseName = (p) => normPath(p).split('/').pop();
+// The main executable of any OmO bundle: <something>.app/Contents/MacOS/OmO.
+const isOmoMainExe = (p) => /\.app\/Contents\/MacOS\/OmO$/.test(normPath(p));
 
 // A process is selected only if it runs from appDir, was created at or after launch, and was not
 // running before launch (by pid).
@@ -23,9 +24,9 @@ export function selectStopTargets(procList, { launchTimeMs, appDir, preLaunchPid
 }
 
 // Throws (exitCode 4) when an owner app is already running before launch: a process under appDir or
-// any process whose executable is named OmO.exe.
+// any process that is the main executable of an OmO bundle.
 export function assertNoOwnerProcess(preLaunchList, { appDir }) {
-  const owners = preLaunchList.filter((p) => isUnder(p.exePath, appDir) || baseName(p.exePath) === 'omo.exe');
+  const owners = preLaunchList.filter((p) => isUnder(p.exePath, appDir) || isOmoMainExe(p.exePath));
   if (owners.length > 0) {
     const err = new Error(`owner app already running before launch: ${owners.map((p) => p.pid).join(', ')}`);
     err.exitCode = 4;

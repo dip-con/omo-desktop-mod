@@ -5,13 +5,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { omoProcessesFrom, powershellOptions, readOmoProfileWith, wireInject, writeStateFile } from '../loader/deps.mjs';
+import { appResourcesDir, bundleExe, childrenFrom, dialogArgs, omoProcessesFrom, parsePsRows, queryOptions, readOmoProfileWith, selectOmoProcesses, wireInject, writeStateFile } from '../loader/deps.mjs';
 import { partitionEnabled } from '../loader/mods.mjs';
 import { ownerAllowed } from '../loader/ownership.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const loaderDir = path.resolve(here, '..', 'loader');
-const APP_EXE = 'C:/Users/alice/AppData/Local/Programs/omo/OmO.exe';
+const APP_EXE = '/Applications/OmO.app/Contents/MacOS/OmO';
 
 // Fakes for every effect of the inject step. Nothing spawns, nothing touches the network, nothing reads a real file.
 function fakeIo({ mods = [], skipped = [], badFiles = [], state = {}, owner = null, children = () => [] } = {}) {
@@ -51,29 +51,54 @@ async function runInject(io) {
   return io.calls.served[0];
 }
 
-test('every PowerShell query carries a 15 s timeout and no console window, and keeps the given env', () => {
-  const opts = powershellOptions({ OMO_LNK_PATH: 'x' });
+test('every system query carries a 15 s timeout and the C locale, and keeps the given env', () => {
+  const opts = queryOptions({ EXTRA: 'x' });
   assert.equal(opts.timeout, 15000);
-  assert.equal(opts.windowsHide, true);
-  assert.equal(opts.env.OMO_LNK_PATH, 'x');
+  assert.equal(opts.env.LC_ALL, 'C');
+  assert.equal(opts.env.EXTRA, 'x');
 });
 
-test('omoProcessesFrom keeps only the rows whose executable is the app exe, ignoring case and slashes', () => {
-  const rows = [
-    { ProcessId: 1, ParentProcessId: 0, ExecutablePath: 'C:\\Users\\alice\\AppData\\Local\\Programs\\omo\\OmO.exe' },
-    { ProcessId: 2, ParentProcessId: 1, ExecutablePath: 'c:/users/alice/appdata/local/programs/omo/omo.exe' },
-    { ProcessId: 3, ParentProcessId: 0, ExecutablePath: 'D:/other/OmO.exe' },
-    { ProcessId: 4, ParentProcessId: 0, ExecutablePath: null },
-  ];
-  assert.deepEqual(omoProcessesFrom(rows, APP_EXE), [
-    { pid: 1, ppid: 0, exePath: rows[0].ExecutablePath },
-    { pid: 2, ppid: 1, exePath: rows[1].ExecutablePath },
-  ]);
+const PS_TEXT = [
+  `  101     1 ${APP_EXE}`,
+  '  102   101 /Applications/OmO.app/Contents/Resources/omo-runtime/darwin-arm64/omo',
+  '  103     1 /Users/alice/Downloads/OmO.app/Contents/MacOS/OmO',
+  '  104     1 /Applications/Other App.app/Contents/MacOS/Other App',
+  '',
+].join('\n');
+
+test('omoProcessesFrom keeps only the ps rows whose executable is exactly the app executable', () => {
+  assert.deepEqual(omoProcessesFrom(PS_TEXT, APP_EXE), [{ pid: 101, ppid: 1, exePath: APP_EXE }]);
 });
 
-test('omoProcessesFrom accepts a single CIM object as well as an array', () => {
-  const row = { ProcessId: 7, ParentProcessId: 1, ExecutablePath: APP_EXE };
-  assert.deepEqual(omoProcessesFrom(row, APP_EXE), [{ pid: 7, ppid: 1, exePath: APP_EXE }]);
+test('parsePsRows keeps executable paths that contain spaces', () => {
+  assert.equal(parsePsRows(PS_TEXT).find((r) => r.pid === 104).exePath, '/Applications/Other App.app/Contents/MacOS/Other App');
+});
+
+test('childrenFrom answers the children of a pid from ps pid/ppid rows', () => {
+  const childrenOf = childrenFrom('  100     1\n  200   100\n  201   100\n  300   200\n');
+  assert.deepEqual(childrenOf(100), [200, 201]);
+  assert.deepEqual(childrenOf(999), []);
+});
+
+test('without OMO_DESKTOP_HOME every process of the app executable counts as running', () => {
+  const all = [{ pid: 101, ppid: 1, exePath: APP_EXE }];
+  const result = selectOmoProcesses({ env: {}, state: { omoPid: 555 }, appExe: APP_EXE, isAlive: () => true, listAll: () => all });
+  assert.deepEqual(result, all);
+});
+
+test('with OMO_DESKTOP_HOME only the live pid in the loader state counts, and other OmO processes are ignored', () => {
+  const listAll = () => {
+    throw new Error('an isolated instance must not list other OmO processes');
+  };
+  const env = { OMO_DESKTOP_HOME: '/tmp/qa-home' };
+  assert.deepEqual(selectOmoProcesses({ env, state: { omoPid: 555 }, appExe: APP_EXE, isAlive: (pid) => pid === 555, listAll }), [{ pid: 555, ppid: null, exePath: APP_EXE }]);
+  assert.deepEqual(selectOmoProcesses({ env, state: { omoPid: 555 }, appExe: APP_EXE, isAlive: () => false, listAll }), []);
+  assert.deepEqual(selectOmoProcesses({ env, state: null, appExe: APP_EXE, isAlive: () => true, listAll }), []);
+});
+
+test('an empty OMO_DESKTOP_HOME is not isolated mode', () => {
+  const all = [{ pid: 101, ppid: 1, exePath: APP_EXE }];
+  assert.deepEqual(selectOmoProcesses({ env: { OMO_DESKTOP_HOME: '' }, state: null, appExe: APP_EXE, isAlive: () => false, listAll: () => all }), all);
 });
 
 test('writeStateFile makes the directory, writes a temp file and renames it over the state file', () => {
@@ -92,28 +117,36 @@ test('writeStateFile makes the directory, writes a temp file and renames it over
   ]);
 });
 
-test('readOmoProfileWith returns OMO_PROFILE from the environment without reading the registry', () => {
+test('readOmoProfileWith returns OMO_PROFILE from the environment without asking launchd', () => {
   const run = () => {
-    throw new Error('registry must not be read');
+    throw new Error('launchd must not be asked');
   };
   assert.equal(readOmoProfileWith({ OMO_PROFILE: 'env-profile' }, run), 'env-profile');
 });
 
-test('readOmoProfileWith reads OMO_PROFILE from HKCU:\\Environment with a read-only script when the env is empty', () => {
-  const scripts = [];
-  const run = (script) => {
-    scripts.push(script);
-    return 'reg-profile';
+test('readOmoProfileWith reads OMO_PROFILE with launchctl getenv, read only, when the env is empty', () => {
+  const calls = [];
+  const run = (file, args) => {
+    calls.push([file, ...args]);
+    return 'launchd-profile';
   };
-  assert.equal(readOmoProfileWith({}, run), 'reg-profile');
-  assert.equal(scripts.length, 1);
-  assert.ok(scripts[0].includes('HKCU:\\Environment'));
-  assert.ok(scripts[0].includes('OMO_PROFILE'));
-  assert.doesNotMatch(scripts[0], /Set-ItemProperty|Remove-ItemProperty|New-ItemProperty|setx|reg (add|delete)/i);
+  assert.equal(readOmoProfileWith({}, run), 'launchd-profile');
+  assert.deepEqual(calls, [['launchctl', 'getenv', 'OMO_PROFILE']]);
 });
 
-test('readOmoProfileWith returns null when the registry value is empty', () => {
+test('readOmoProfileWith returns null when launchd has no value', () => {
   assert.equal(readOmoProfileWith({}, () => ''), null);
+});
+
+test('the dialog passes text and title as osascript argv, never inside the script', () => {
+  const args = dialogArgs('a "quoted" text', 'Title');
+  assert.deepEqual(args.slice(-2), ['a "quoted" text', 'Title']);
+  assert.equal(args.slice(0, -2).some((a) => a.includes('quoted')), false);
+});
+
+test('the config names the app bundle, and the executable and resources sit inside it', () => {
+  assert.equal(bundleExe('/Applications/OmO.app'), '/Applications/OmO.app/Contents/MacOS/OmO');
+  assert.equal(appResourcesDir('/Applications/OmO.app'), '/Applications/OmO.app/Contents/Resources');
 });
 
 test('inject loads only the enabled mods', async () => {

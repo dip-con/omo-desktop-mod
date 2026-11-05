@@ -6,15 +6,17 @@ connection closes. Mods live beside this folder (see "Mod folder").
 
 ## Entry and commands
 
-- `node loader/launch.mjs [--no-mods] [--plan-only]`: the real entry (`launch.vbs` runs it; the three usual `OmO.lnk`
-  icons start `launch.vbs` once they are retargeted, see the top README). `--no-mods` starts the app
-  without injection. `--plan-only` decides and prints one JSON line `{action, exitCode, port, omoProfile}` without
+- `node loader/boot.mjs <appBundle> [--safe]`: what `~/Applications/OmO Mods.app` runs (with `/Applications/OmO.app`).
+  If the loader cannot start it shows a dialog and starts the app plainly (`<bundle>/Contents/MacOS/OmO`).
+- `node loader/launch.mjs [--no-mods] [--safe] [--plan-only]`: the launch logic. `--no-mods` / `--safe` (or Shift held)
+  start the app without injection. `--plan-only` decides and prints one JSON line `{action, exitCode, port, omoProfile}` without
   spawning, showing a box, or writing state (the lock and logs still go to the state directory).
 - `node loader/main.mjs`: thin alias of the same entry.
 - `node loader/check.mjs`: `{fingerprint, appVersion, mods:[{id, enabled, tested}]}`.
 - `node loader/check.mjs status --json`: `{running, modded, port, fingerprint, mods:[{id, attached, reason}]}`.
-- `node loader/check.mjs --record-build`: adds the current build key to each `mod.json` `testedBuilds`. Manual only,
-  after a new app version passed QA.
+- `node loader/check.mjs --record-build`: adds the current build key to each `mod.json` `testedBuilds`. Optional and
+  informational; attaching is decided by anchors only.
+- `node loader/update.mjs [--check] [--pull] [--mod <id>]... [--mods-home <dir>]`: update check / apply, see the top `UPDATE.md`.
 
 ## Mod folder and mod.json
 
@@ -25,12 +27,14 @@ from the repository it is `REPO/mods`. The folder name must equal `id`.
 { "id": "sample", "name": "Sample", "nameKo": "프로필", "version": "0.1.0", "enabled": true, "order": 10,
   "entry": { "page": "page.js", "css": "style.css", "host": "host.mjs" },
   "contributes": { "settingsPage": { "id": "sample", "label": "프로필" } },
-  "testedBuilds": ["<buildKey>"],
+  "update": { "repo": "/Users/me/src/sample-mod", "subdir": "mods/sample" },
   "anchors": [ { "selector": "[data-settings-nav-path=\"/settings/general\"]", "route": "/settings/general" } ] }
 ```
 
 - `route` is `*`, a path prefix with a trailing slash (`/settings/`), or an exact path (`/settings/general`).
 - `entry.page`, `entry.css`, `entry.host` are relative paths inside the mod folder.
+- `testedBuilds` (optional string array) is informational. `update` (optional `{repo, subdir?}`) names the source used
+  by the update check when the install manifest has none.
 - `descriptionKo` (optional string) is the Korean line shown in Settings > 모드. `locked` (optional boolean) keeps a mod
   injected whatever `enabled` says; only the built-in `modmgr` sets it.
 - A mod that fails the format check is skipped and shown in the notice with reason `BAD_FORMAT`.
@@ -64,7 +68,6 @@ bundle in each attached window, reload it). Other `__` names are refused.
 | Code | Meaning |
 |---|---|
 | `ANCHOR_MISSING` | an anchor for the current route is absent after the 5 s wait; that mod is hidden |
-| `UNKNOWN_BUILD` | all anchors present, build key not in `testedBuilds`; the mod is attached |
 | `DISABLED` | `enabled: false` |
 | `BAD_FORMAT` | `mod.json` fails the format check |
 | `BAD_FILES` | a page, css or host file cannot be read, or the page does not compile |
@@ -78,10 +81,10 @@ bundle in each attached window, reload it). Other `__` names are refused.
 
 - The app gets the parent environment unchanged, plus `OMO_DESKTOP_REMOTE_DEBUGGING_PORT=<port>`, and the argument
   `--remote-debugging-address=127.0.0.1`. Nothing is scrubbed. `OMO_PROFILE` is read from the spawn environment, else
-  from `HKCU\Environment` (read only). It is never written or cleared.
+  from `launchctl getenv OMO_PROFILE` (read only). It is never written or cleared.
 - The home guard runs first: the real home must equal `os.homedir()`, and no agent-dir variable may point elsewhere
   (otherwise exit 4, no spawn).
-- State file: `%LOCALAPPDATA%/omo-app-mods/state.json` (override for tests: `LOADER_STATE_DIR`). Fields: `omoPid`,
+- State file: `~/Library/Application Support/omo-app-mods/state.json` (override for tests: `LOADER_STATE_DIR`). Fields: `omoPid`,
   `port`, `fingerprint`, `startedAt`, `omoProfile`, `pathname`, `mods: [{id, attached, reason}]`. Written atomically.
 - Lock: `loader.lock` in the state directory, JSON `{pid, startedAt}`. A second helper stops if the lock is not stale (see the lifecycle contract).
 - Logs: `logs/launch-<UTC>.log` in the state directory, the newest ten kept.
@@ -97,8 +100,8 @@ bundle in each attached window, reload it). Other `__` names are refused.
   while the socket stays open (`Target.targetDestroyed`, `Inspector.detached`) is dropped, and the next
   `Target.targetCreated` is attached as usual. A renderer crash (`Inspector.targetCrashed`) keeps the session: the entry
   is only marked crashed, so the watchdog still acts on it.
-- Owner PID: the port's owner (`Get-NetTCPConnection`) must be the spawned OmO pid recorded in the state (or the recorded
-  pid in attach mode), or one of its descendants (child lookup over `Win32_Process`).
+- Owner PID: the port's owner (`lsof`) must be the spawned OmO pid recorded in the state (or the recorded
+  pid in attach mode), or one of its descendants (child lookup over `ps`).
 - Stale lock: the lock is stale when its pid is dead, or when the pid now belongs to a process that started after the
   lock's `startedAt` (pid reuse). A legacy plain-pid lock is judged by liveness only. An unknown start time counts as not
   stale.
@@ -118,9 +121,9 @@ bundle in each attached window, reload it). Other `__` names are refused.
 
 ## Decisions and known gaps
 
-- Plan branch (a) "OmO.exe missing" is read as "OmO not running". A missing executable exits 2.
-- Running OmO with any unmet attach condition exits 3, with a message box: quit OmO from the tray and start it again
-  from the OmO icon (`NOT_RUNNING_TEXT`).
+- Plan branch (a) "`OmO.app/Contents/MacOS/OmO` missing" is read as "OmO not running". A missing executable exits 2.
+- Running OmO with any unmet attach condition exits 3, with a message box: quit OmO and start it again
+  from `OmO Mods.app` (`NOT_RUNNING_TEXT`).
 - Build key = sha256 of `[appVersion, client, omoRef, omoSha, plugin]`.
 - Route changes are detected by `popstate`, `hashchange`, and the DOM mutation that follows an in-page `pushState`.
   A `pushState` that changes no DOM is not seen until the next mutation.

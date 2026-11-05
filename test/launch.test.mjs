@@ -9,14 +9,14 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { acquireLock, checkHome, decideLaunch, LOOPBACK_HOST, pickLoopbackPort, runLaunch, sameExe, PORT_VAR } from '../loader/launch.mjs';
 import { ALREADY_RUNNING_TEXT, DEBUG_PORT_TEXT, PLAIN_START_TEXT } from '../loader/messages.mjs';
-import { modifierKeysHoldShift, readOmoProfileWith, shiftHeldWith } from '../loader/deps.mjs';
+import { modifierFlagsHoldShift, readOmoProfileWith, shiftHeldWith } from '../loader/deps.mjs';
 import { partitionEnabled } from '../loader/mods.mjs';
 import { buildKey, readAsarEntry, readFingerprint } from '../loader/fingerprint.mjs';
-import { makeAsar } from './helpers/asar.mjs';
+import { makeMacBundle } from './helpers/mac-app.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const OS_HOME = 'C:/Users/alice';
-const APP_EXE = 'C:/app/OmO.exe';
+const OS_HOME = '/Users/alice';
+const APP_EXE = '/Applications/OmO.app/Contents/MacOS/OmO';
 const OMO_PROC = { pid: 1, exePath: APP_EXE };
 
 function withTempDir(body) {
@@ -27,7 +27,7 @@ function withTempDir(body) {
 // Fake dependencies: every side effect is recorded; nothing is spawned, shown or written outside dir.
 function fakeDeps(dir, overrides = {}) {
   const rec = { spawned: [], messages: [], logs: [], states: [], injected: [], reports: [], watched: [], plain: [] };
-  const parentEnv = { USERPROFILE: 'C:\\Users\\alice', PATH: 'C:\\Windows', OMO_PROFILE: 'work' };
+  const parentEnv = { HOME: '/Users/alice', PATH: '/usr/bin:/bin', OMO_PROFILE: 'work' };
   const deps = {
     osHome: OS_HOME,
     homedir: OS_HOME,
@@ -70,7 +70,7 @@ function fakeDeps(dir, overrides = {}) {
 
 test('a home guard trip exits 4 with the existing box, and starts nothing', async () => {
   await withTempDir(async (dir) => {
-    const { deps, rec } = fakeDeps(dir, { homedir: 'C:/Users/alice/.omo-lane/home' });
+    const { deps, rec } = fakeDeps(dir, { homedir: '/Users/alice/.omo-lane/home' });
     assert.equal(await runLaunch([], deps), 4);
     assert.equal(rec.spawned.length, 0);
     assert.equal(rec.plain.length, 0);
@@ -152,7 +152,7 @@ test('--safe while OmO runs starts nothing and shows no box', async () => {
 });
 
 test('a held Shift starts plain exactly like --safe, with and without OMO_PROFILE in the environment', async () => {
-  const environments = [{ PATH: 'C:\\Windows' }, { PATH: 'C:\\Windows', OMO_PROFILE: 'work' }];
+  const environments = [{ PATH: '/usr/bin' }, { PATH: '/usr/bin', OMO_PROFILE: 'work' }];
   for (const env of environments) {
     await withTempDir(async (dir) => {
       const { deps, rec } = fakeDeps(dir, { env, omoProfile: env.OMO_PROFILE ?? null, shiftHeld: () => true });
@@ -164,38 +164,41 @@ test('a held Shift starts plain exactly like --safe, with and without OMO_PROFIL
   }
 });
 
-test('the Shift check reads the ModifierKeys output, alone or among other modifiers', () => {
-  assert.equal(modifierKeysHoldShift('Shift\r\n'), true);
-  assert.equal(modifierKeysHoldShift('Control, Shift\r\n'), true);
-  assert.equal(modifierKeysHoldShift('None\r\n'), false);
-  assert.equal(modifierKeysHoldShift('Control\r\n'), false);
+test('the Shift check reads the Shift bit of NSEvent.modifierFlags, alone or among other modifiers', () => {
+  assert.equal(modifierFlagsHoldShift('131072\n'), true);
+  assert.equal(modifierFlagsHoldShift(String(0x20000 | 0x40000)), true);
+  assert.equal(modifierFlagsHoldShift('0\n'), false);
+  assert.equal(modifierFlagsHoldShift(String(0x40000)), false);
+  assert.equal(modifierFlagsHoldShift(''), false);
 });
 
-test('with OMO_PROFILE set the Shift check still runs its own PowerShell call, with the env it was given', () => {
-  const env = { PATH: 'C:\\Windows', OMO_PROFILE: 'work' };
+test('with OMO_PROFILE set the Shift check still runs its own osascript call, with the env it was given', () => {
+  const env = { PATH: '/usr/bin', OMO_PROFILE: 'work' };
   const calls = [];
-  const run = (script, callEnv) => {
-    calls.push({ script, callEnv });
-    return 'Shift';
+  const run = (file, args, callEnv) => {
+    calls.push({ file, args, callEnv });
+    return '131072';
   };
   assert.equal(readOmoProfileWith(env, run), 'work');
   assert.deepEqual(calls, []);
   assert.equal(shiftHeldWith(run, env), true);
   assert.equal(calls.length, 1);
-  assert.match(calls[0].script, /ModifierKeys/);
+  assert.equal(calls[0].file, 'osascript');
+  assert.deepEqual(calls[0].args.slice(0, 2), ['-l', 'JavaScript']);
+  assert.match(calls[0].args.at(-1), /NSEvent\.modifierFlags/);
   assert.equal(calls[0].callEnv, env);
 });
 
-test('realDeps wires shiftHeld to the ModifierKeys check, not to a constant', () => {
+test('realDeps wires shiftHeld to the modifier-flags check, not to a constant', () => {
   const source = fs.readFileSync(path.join(here, '..', 'loader', 'deps.mjs'), 'utf8');
   assert.match(source, /shiftHeld:\s*\(\)\s*=>\s*shiftHeldWith\(\)/);
 });
 
 test('the home guard passes on the real home and fails when homedir or an agent-dir variable points elsewhere', () => {
   assert.deepEqual(checkHome({ osHome: OS_HOME, homedir: OS_HOME, env: {} }), []);
-  assert.equal(checkHome({ osHome: OS_HOME, homedir: 'C:/Users/alice/.omo-lane/home', env: {} }).length > 0, true);
-  assert.equal(checkHome({ osHome: OS_HOME, homedir: OS_HOME, env: { PI_CODING_AGENT_DIR: 'C:/Users/alice/.omo-lane/home/.omo/agent' } }).length > 0, true);
-  assert.deepEqual(checkHome({ osHome: OS_HOME, homedir: OS_HOME, env: { PI_CODING_AGENT_DIR: 'C:/Users/alice/.omo/agent' } }), []);
+  assert.equal(checkHome({ osHome: OS_HOME, homedir: '/Users/alice/.omo-lane/home', env: {} }).length > 0, true);
+  assert.equal(checkHome({ osHome: OS_HOME, homedir: OS_HOME, env: { PI_CODING_AGENT_DIR: '/Users/alice/.omo-lane/home/.omo/agent' } }).length > 0, true);
+  assert.deepEqual(checkHome({ osHome: OS_HOME, homedir: OS_HOME, env: { PI_CODING_AGENT_DIR: '/Users/alice/.omo/agent' } }), []);
 });
 
 test('decideLaunch: not running launches', () => {
@@ -228,7 +231,7 @@ test('decideLaunch: a missing app executable refuses with code 2 and no launch',
 
 test('a home-redirected run exits 4 and spawns nothing', async () => {
   await withTempDir(async (dir) => {
-    const { deps, rec } = fakeDeps(dir, { homedir: 'C:/Users/alice/.omo-lane/home' });
+    const { deps, rec } = fakeDeps(dir, { homedir: '/Users/alice/.omo-lane/home' });
     assert.equal(await runLaunch([], deps), 4);
     assert.equal(rec.spawned.length, 0);
     assert.equal(rec.messages.length, 1);
@@ -417,24 +420,24 @@ test('partitionEnabled splits enabled and disabled mods so a disabled mod never 
   assert.deepEqual(disabled.map((m) => m.id), ['off']);
 });
 
-test('sameExe ignores separator style and letter case, and rejects a different file', () => {
-  assert.equal(sameExe('C:/Users/alice/AppData/Local/Programs/omo/OmO.exe', 'c:\\users\\alice\\appdata\\local\\programs\\omo\\omo.EXE'), true);
-  assert.equal(sameExe('C:/app/OmO.exe', 'C:/app/OmO-helper.exe'), false);
+test('sameExe compares exact paths after resolving dots and doubled slashes, and rejects a different file', () => {
+  assert.equal(sameExe(APP_EXE, '/Applications//OmO.app/Contents/MacOS/./OmO'), true);
+  assert.equal(sameExe(APP_EXE, '/Applications/OmO.app/Contents/Resources/omo-runtime/darwin-arm64/omo'), false);
+  assert.equal(sameExe(APP_EXE, '/Users/alice/Applications/OmO.app/Contents/MacOS/OmO'), false);
 });
 
 test('the entry file runs the launch when executed (plan-only, temp copy of loader, no spawn)', async () => {
   await withTempDir(async (dir) => {
-    // Given: a copy of loader/ whose config points at an exe that does not exist, so no real OmO.exe is reachable from this run
+    // Given: a copy of loader/ whose config points at a bundle that does not exist, so no real app is reachable from this run
     const copy = path.join(dir, 'app', 'loader');
     fs.cpSync(path.join(here, '..', 'loader'), copy, { recursive: true });
-    fs.writeFileSync(path.join(copy, 'config.json'), JSON.stringify({ appExe: path.join(dir, 'missing', 'OmO.exe') }));
+    fs.writeFileSync(path.join(copy, 'config.json'), JSON.stringify({ appBundle: path.join(dir, 'missing', 'OmO.app') }));
     const entry = path.join(copy, 'launch.mjs');
-    // The child keeps the real home as USERPROFILE so the home guard passes; --plan-only never spawns or shows a box.
-    const home = os.userInfo().homedir;
-    const childEnv = { ...process.env, USERPROFILE: home, HOMEDRIVE: home.slice(0, 2), HOMEPATH: home.slice(2), LOADER_STATE_DIR: dir };
+    // The child keeps the account home as HOME so the home guard passes; --plan-only never spawns or shows a box.
+    const childEnv = { ...process.env, HOME: os.userInfo().homedir, LOADER_STATE_DIR: dir };
     for (const k of ['OMO_CODING_AGENT_DIR', 'SENPI_CODING_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'T3CODE_OMO_AGENT_DIR']) delete childEnv[k];
     const out = execFileSync(process.execPath, [entry, '--plan-only'], { encoding: 'utf8', timeout: 120000, env: childEnv });
-    // Then: the entry ran runLaunch (a JSON report on stdout), the missing exe is refused with code 2, the log is in the temp dir
+    // Then: the entry ran runLaunch (a JSON report on stdout), the missing bundle is refused with code 2, the log is in the temp dir
     const report = JSON.parse(out.trim().split('\n').pop());
     assert.equal(report.action, 'refuse');
     assert.equal(report.exitCode, 2);
@@ -444,8 +447,8 @@ test('the entry file runs the launch when executed (plan-only, temp copy of load
 });
 
 // Scans every test file: no line that starts a child process names the real app exe or a path under the real account home.
-test('no test spawns a child with the real OmO.exe or the real account home', () => {
-  const real = /DEFAULT_APP_EXE|Programs[\\/]omo|homedir\(\)|AppData/i;
+test('no test spawns a child with the real OmO app or the real account home', () => {
+  const real = /DEFAULT_APP_BUNDLE|\/Applications\/OmO\.app|homedir\(\)|Library[\\/]Application Support/i;
   const spawning = /spawn|exec|fork/;
   const files = fs.readdirSync(here).filter((name) => name.endsWith('.test.mjs'));
   const hits = [];
@@ -457,34 +460,46 @@ test('no test spawns a child with the real OmO.exe or the real account home', ()
   assert.deepEqual(hits, []);
 });
 
-// Builds a fake install: the asar header with a package.json, the client html, the runtime manifest and the plugin.
-function makeAppDir(dir, { clientHtml = '<html>a</html>' } = {}) {
-  const res = path.join(dir, 'resources');
-  fs.mkdirSync(path.join(res, 'omo-server', 'client'), { recursive: true });
-  fs.mkdirSync(path.join(res, 'omo-runtime', 'win32-x64', 'plugin', 'extensions'), { recursive: true });
-  fs.writeFileSync(path.join(res, 'app.asar'), makeAsar({ 'package.json': Buffer.from(JSON.stringify({ version: '9.9.9' })) }));
-  fs.writeFileSync(path.join(res, 'omo-server', 'client', 'index.html'), clientHtml);
-  fs.writeFileSync(path.join(res, 'omo-runtime', 'win32-x64', 'bundle-manifest.json'), JSON.stringify({ omoRef: 'v1', resolvedShas: { omo: 'abc' } }));
-  fs.writeFileSync(path.join(res, 'omo-runtime', 'win32-x64', 'plugin', 'extensions', 'omo.js'), 'plugin');
-}
-
-test('the fingerprint reads the asar package version and the runtime values', async () => {
+test('the fingerprint reads the asar package version and the runtime values from the bundle', async () => {
   await withTempDir((dir) => {
-    makeAppDir(dir);
-    const fp = readFingerprint(dir);
+    const bundle = makeMacBundle(path.join(dir, 'OmO.app'));
+    const fp = readFingerprint(bundle);
     assert.equal(fp.appVersion, '9.9.9');
     assert.equal(fp.runtime.omoRef, 'v1');
     assert.equal(fp.runtime.omoSha, 'abc');
-    assert.equal(readAsarEntry(path.join(dir, 'resources', 'app.asar'), 'package.json').toString('utf8').includes('9.9.9'), true);
+    assert.equal(fp.client.length, 64);
+    assert.equal(fp.plugin.length, 64);
+    assert.equal(readAsarEntry(path.join(bundle, 'Contents', 'Resources', 'app.asar'), 'package.json').toString('utf8').includes('9.9.9'), true);
+  });
+});
+
+test('the fingerprint uses another darwin runtime folder when the one for this arch is absent', async () => {
+  await withTempDir((dir) => {
+    const other = process.arch === 'arm64' ? 'x64' : 'arm64';
+    const fp = readFingerprint(makeMacBundle(path.join(dir, 'OmO.app'), { arch: other }));
+    assert.equal(fp.runtime.omoRef, 'v1');
+    assert.equal(fp.plugin.length, 64);
+  });
+});
+
+test('the fingerprint never throws: a missing bundle gives null parts, a partial bundle nulls only what is missing', async () => {
+  await withTempDir((dir) => {
+    assert.deepEqual(readFingerprint(path.join(dir, 'missing.app')), { appVersion: null, client: null, runtime: { omoRef: null, omoSha: null }, plugin: null });
+    const bundle = makeMacBundle(path.join(dir, 'OmO.app'));
+    fs.rmSync(path.join(bundle, 'Contents', 'Resources', 'app.asar'));
+    fs.rmSync(path.join(bundle, 'Contents', 'Resources', 'omo-server', 'client', 'index.html'));
+    const fp = readFingerprint(bundle);
+    assert.equal(fp.appVersion, null);
+    assert.equal(fp.client, null);
+    assert.equal(fp.runtime.omoSha, 'abc');
+    assert.equal(buildKey(fp).length, 64);
   });
 });
 
 test('the build key changes when the client file changes and is stable otherwise', async () => {
   await withTempDir((dir) => {
-    const a = path.join(dir, 'a');
-    const b = path.join(dir, 'b');
-    makeAppDir(a);
-    makeAppDir(b, { clientHtml: '<html>changed</html>' });
+    const a = makeMacBundle(path.join(dir, 'a.app'));
+    const b = makeMacBundle(path.join(dir, 'b.app'), { clientHtml: '<html>changed</html>' });
     assert.equal(buildKey(readFingerprint(a)), buildKey(readFingerprint(a)));
     assert.notEqual(buildKey(readFingerprint(a)), buildKey(readFingerprint(b)));
   });

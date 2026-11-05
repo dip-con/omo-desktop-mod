@@ -3,7 +3,6 @@
 (function () {
   var REASON_TEXT = {
     ANCHOR_MISSING: '자리를 못 찾아 {name}을(를) 껐어요',
-    UNKNOWN_BUILD: '시험 안 한 버전이지만 자리가 있어 {name}을(를) 켰어요',
     DISABLED: '{name}은(는) 꺼 둔 모드예요',
     BAD_FORMAT: '{name}의 mod.json 형식이 틀려 건너뛰었어요',
     BAD_FILES: '{name}의 파일을 읽지 못해 건너뛰었어요',

@@ -1,8 +1,8 @@
 # Mod format
 
 This document describes how a mod is laid out, how the loader treats it, and what a mod may
-touch. It is written for the mod author and for the maintainer who decides whether a new app
-build is safe to mark as tested.
+touch. It is written for the mod author. Paths are the macOS ones: mods home `~/.omo/app-mods`,
+state directory `~/Library/Application Support/omo-app-mods` (override: `LOADER_STATE_DIR`).
 
 ## 1. mod.json
 
@@ -21,7 +21,7 @@ A mod is one folder `<modsRoot>/<id>/` with a `mod.json` at its top. The folder 
   "order": 10,
   "entry": { "page": "page.js", "css": "page.css", "host": "host.mjs" },
   "contributes": { "settingsPage": { "id": "sample", "label": "프로필" } },
-  "testedBuilds": ["<build key>"],
+  "update": { "repo": "/Users/me/src/sample-mod", "subdir": "mods/sample" },
   "anchors": [
     { "selector": "#root", "route": "*" },
     { "selector": "[data-settings-nav-path]", "route": "/settings/" }
@@ -41,7 +41,8 @@ A mod is one folder `<modsRoot>/<id>/` with a `mod.json` at its top. The folder 
 | `entry.css` | string | optional, relative path inside the mod folder |
 | `entry.host` | string | optional, relative path inside the mod folder; an ES module |
 | `contributes.settingsPage` | object | optional; `{id, label}` |
-| `testedBuilds` | string[] | build keys the mod was QA'd on (see section 6) |
+| `testedBuilds` | string[] | optional; informational only, it never changes whether the mod attaches |
+| `update` | object | optional; `{repo, subdir?}`, absolute repository path and the mod folder inside it. Used by the update check when the install manifest has no source for this mod (see [UPDATE.md](../UPDATE.md)) |
 | `anchors` | array | `{selector, route}`; the places where the mod attaches |
 
 A path that leaves the mod folder (absolute, or containing `..`) is refused. A mod that fails
@@ -55,24 +56,21 @@ the format check is skipped and reported with its reason; the other mods still l
 | `main` / `browser` entry | `entry.page` (+ `entry.host`) | the page runs in an isolated world, not in the app's main world |
 | `activationEvents` | `anchors` + `route` | a mod runs where its anchors exist, not on a global event |
 | `contributes` | `contributes.settingsPage` | only the settings page is a contribution point today |
-| `engines.vscode` | `testedBuilds` | an explicit list of app builds, not a version range |
+| `engines.vscode` | `anchors` | compatibility is decided on screen by the anchors, not by a version range |
 | `enabledApiProposals` | none | no proposals; the bridge is the only extra API |
 
 If you want to propose an "extension mode" to a developer, the mapping above is the starting
-point. The difference that matters: the app's build is not a semver range. A new build is
-"unknown" until someone runs the QA and records it.
+point.
 
 ## 2. Lifecycle
 
 1. **Discover.** `loader/mods.mjs` reads `<modsRoot>/*/mod.json` (skipping `_loader`) and sorts by
    `order`, then `id`. Broken entries go to the notice with a reason.
-2. **Version check.** The loader fingerprints the installed app (`loader/fingerprint.mjs`) to a
-   build key. For each mod and each anchor that applies to the current route, the loader checks
+2. **Anchor check.** The loader fingerprints the installed app (`loader/fingerprint.mjs`, reading
+   `/Applications/OmO.app/Contents/Resources`) for the state file and logs. For each mod and each anchor that applies to the current route, the loader checks
    that the anchor element is present (waiting up to 5 seconds per route change).
    - An anchor missing: that mod alone is switched off, reason `ANCHOR_MISSING`.
-   - All anchors present, build key not in `testedBuilds`: the mod is attached anyway, reason
-     `UNKNOWN_BUILD`.
-   - Otherwise: attached, no reason.
+   - All anchors present: attached, no reason. The build key plays no part.
 3. **Inject.** The loader attaches to the main window only (`mainTarget` in `docs/app-facts.json`,
    `omo://app/`), and runs one bundle in the isolated world `omo-mods`. The bundle contains the
    route and evaluation functions copied from `mods.mjs`, the page runtime, and each mod's page
@@ -117,7 +115,8 @@ modmgr host methods (Settings > 모드):
 |---|---|
 | `list()` | `{ok, mods}`: one row per installed mod with `id`, `nameKo`, `descriptionKo`, `enabled`, `locked`, a Korean `status` (`붙음`, `꺼짐`, `못 붙음`, ...) from the loader's last `state.json`, and `expected` (sha256 of its `mod.json`) |
 | `setEnabled({id, on, expected})` | changes only the `enabled` value of one unlocked `mod.json`, after a backup to `<mods-home>/_loader/backups/<time>/<id>-mod.json`. Refusals: `LOCKED`, `STALE` (the file changed since `list`), `UNKNOWN_MOD`, `BAD_ARGS`, `BAD_FORMAT` |
-| `shortcuts()` | read only, asynchronous: `{ok, shortcuts}` with one row each for the three `OmO.lnk` (`label` `desktop`, `startmenu`, `taskbar`) in the account's own profile folder. A row has `path`, `kind` (`mod`: starts `launch.vbs` through `wscript.exe`; `plain`: starts `OmO.exe` with no arguments; `other`; `missing`), `error` and the link's `target`, `args`, `workdir`, `icon`, `aumid`, `description`. A missing or unreadable icon is that row's state (`missing`, or `other` with `error`); the call still answers `ok`. The answer is kept until one of the four files changes. There is no method that writes a shortcut |
+| `checkUpdates()` | `{ok, items}`: per installed id, `installedHash`, `sourceHash`, `changed`, `error` (`NO_SOURCE`, `SOURCE_MISSING`, `READ_FAILED`). Refusal `NO_MANIFEST` |
+| `applyUpdates({ids, pull})` | copies the changed sources in (optionally `git pull` first); `{ok, applied, skipped, errors}`. Refusals `NO_MANIFEST`, `BAD_ARGS` |
 
 Mod DOM rules: every element the mod creates lives under `[data-omo-mod-root="<id>"]`, and its
 style carries `data-omo-mod="<id>"`. The loader hides these when the anchors are missing. Mods do
@@ -126,7 +125,7 @@ not move, replace or clone the app's nodes.
 ## 4. Security model
 
 - **Debug port.** The app opens a Chromium remote-debugging endpoint only when it is launched
-  through the mods shortcut. The loader passes `--remote-debugging-address=127.0.0.1` and an
+  through `OmO Mods.app` (the loader). The loader passes `--remote-debugging-address=127.0.0.1` and an
   ephemeral port in `OMO_DESKTOP_REMOTE_DEBUGGING_PORT`. The port is not in the normal launch
   environment.
 - **Binding only.** The loader listens on loopback. It does not expose an HTTP server of its
@@ -146,34 +145,24 @@ not move, replace or clone the app's nodes.
 
 ```
 <mods-home>/
-  _loader/       loader code, config.json, app-facts.json, install-manifest.json, launch.vbs
+  _loader/       loader code, update.mjs, config.json, app-facts.json, install-manifest.json, backups/
   modmgr/        mod.json (locked), page.js, page.css, host.mjs, host/
   sample/        mod.json, page.js, page.css, host.mjs
   ko/            mod.json, page.js
 ```
 
-`tools/install.mjs` writes this layout and makes no shortcut unless `--with-icons` is given; that
-flag also runs `tools/shortcuts.mjs apply`, which points the three `OmO.lnk` icons at `launch.vbs`
-through `wscript.exe` after a backup under `<mods-home>/backup/<time>`. An `OmO (모드).lnk` an older install
-recorded is removed on reinstall. `--uninstall` first restores the icons from the newest backup record,
-then removes only the files in the manifest; it refuses with `ICONS_STILL_RETARGETED` (nothing removed)
-while an `OmO.lnk` still starts the launcher and no backup record exists.
+`tools/install.mjs` writes this layout under `~/.omo/app-mods` and a launcher `~/Applications/OmO Mods.app`
+(skip it with `--no-launcher`). The launcher runs `node _loader/boot.mjs /Applications/OmO.app` and passes its
+arguments on, so `--safe` works. The app bundle and its icon are never touched. `--uninstall` removes only the
+files in the manifest and our launcher. Loader state and logs live in `~/Library/Application Support/omo-app-mods`.
 
-## 6. New app version procedure
+## 6. After an app update
 
-The loader trusts a build only after it has been tested on that build.
+No build has to be recorded. The anchors decide, so a mod keeps working while its anchors exist.
 
-1. Update the app as usual. The loader does not change the app directory. The app's own updater
-   keeps the existing icons when it runs with `KeepShortcuts=true`, so they still start the mod
-   launcher. A fresh install of the app recreates `OmO.lnk` pointing at `OmO.exe`; run
-   `tools/shortcuts.mjs apply` again with a new backup folder, or see ROLLBACK.md.
-   Check with `node tools/shortcuts.mjs status` (no flags needed).
-2. Run `node loader/check.mjs` and note the new build key and app version.
-3. Run the QA on the new build: install into a temporary mods home, launch through `launch.vbs`,
-   and check that each mod attaches with no reason, the settings page and the Korean text are
-   correct, and that closing the app leaves no helper process.
-4. Only when that passes, run `node loader/check.mjs --record-build`. It adds the build key to the
-   `testedBuilds` of each mod. Review the diff and commit it. Never run `--record-build`
-   automatically.
-5. If the QA fails, leave `testedBuilds` alone. Mods then attach with reason `UNKNOWN_BUILD`.
-   A failing anchor switches the mod off with reason `ANCHOR_MISSING`.
+1. Update OmO as usual. The loader never writes into `/Applications/OmO.app`, and `OmO Mods.app` keeps working.
+2. Run `node loader/check.mjs status --json` to see which mods attached and why.
+3. A mod switched off with `ANCHOR_MISSING` needs new anchors (or a new mod version). Fix `anchors` in its
+   repository and bring it in with [UPDATE.md](../UPDATE.md).
+4. `node loader/check.mjs --record-build` still exists if you want to note a QA'd build in `testedBuilds`. It is
+   optional and changes nothing about attaching.

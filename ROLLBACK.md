@@ -1,48 +1,27 @@
-# Rollback
+# 되돌리기
 
-This page covers putting the three OmO icons back and removing the mods. Paths use Windows variables such as `%USERPROFILE%`. `<mods-home>` is the mods home the installer used; `node tools/install.mjs --help` prints its default.
+macOS판은 OmO 앱 아이콘이나 앱 번들을 바꾸지 않아요. 그래서 되돌릴 일은 "모드 없이 쓰기"와 "이전 버전 모드로 돌아가기" 두 가지예요.
 
-## How the icons were changed
+## 모드 없이 쓰기
 
-`node tools/install.mjs --with-icons` runs `tools/shortcuts.mjs apply`. It points the three usual `OmO.lnk` icons (Desktop, Start Menu, taskbar pin) at the mod launcher. Before changing anything it copies each icon into `<mods-home>\backup\<time>` and writes a `manifest.json` there with each icon's sha256.
+- `/Applications/OmO.app`을 직접 열면 모드 없이 시작해요.
+- `OmO Mods.app`을 쓰면서 잠깐만 끄려면 Shift를 누른 채 열거나 `--safe`로 실행해요.
+- 모드 하나만 끄려면 설정 > 모드의 스위치를 써요.
+- 완전히 지우려면 [UNINSTALL.md](UNINSTALL.md).
 
-## Restore the icons and remove the mods
+## 이전 버전으로 돌아가기
 
-The usual way is one command, described in [UNINSTALL.md](UNINSTALL.md):
+업데이트는 원본 저장소의 파일을 복사해 와요. 원본 저장소에서 원하는 커밋으로 돌아간 뒤 다시 반영하면 돼요.
 
-```
-node tools/install.mjs --uninstall
-```
-
-It restores the icons from the newest backup record first, then removes the files listed in the install manifest.
-
-## Restore only the icons
-
-```
-node tools/shortcuts.mjs status
-node tools/shortcuts.mjs restore --backup-dir <backup-folder> --dry-run
-node tools/shortcuts.mjs restore --backup-dir <backup-folder>
+```sh
+cd <원본 저장소>
+git checkout <커밋>
+node ~/.omo/app-mods/_loader/update.mjs --check
+node ~/.omo/app-mods/_loader/update.mjs
 ```
 
-`<backup-folder>` is one of the `<mods-home>\backup\<time>` folders. `status` only reads. `restore` copies the backed-up bytes back, checks each sha256, and then removes the `manifest.json`. The icon folders resolve from your Windows profile; pass `--desktop-dir`, `--start-menu-dir` or `--taskbar-dir` only if yours are somewhere else.
+`--pull` 없이 실행하면 저장소를 당겨오지 않고 지금 체크아웃된 파일을 그대로 복사해요. 로더 저장소에서 `node tools/install.mjs`를 다시 실행해도 같아요. 모드 스위치(`enabled`)를 바꾸기 전 `mod.json` 백업은 `~/.omo/app-mods/_loader/backups/<시각>/`에 있어요.
 
-`restore` stops without writing on:
+## English
 
-- `NO_MANIFEST`: the folder has no `manifest.json`. The icons were already restored, or it's the wrong folder.
-- `BACKUP_MISSING` or `BACKUP_MISMATCH`: a backup file is gone or changed.
-
-For the next `apply`, use a new, empty backup folder. The backups keep a read-only attribute, so a second `apply` into the same folder can fail with `EPERM`.
-
-## ICONS_STILL_RETARGETED
-
-`--uninstall` refuses with `ICONS_STILL_RETARGETED`, and removes nothing, when an `OmO.lnk` still starts the mod launcher and `<mods-home>\backup` holds no backup record. To fix it:
-
-1. Quit OmO from the tray.
-2. If you still have a backup folder somewhere else, run the `restore` command above with `--backup-dir` pointing at it.
-3. Otherwise, delete the changed `OmO.lnk` icons and make new ones: right-click `OmO.exe` in the OmO install folder (usually `%LOCALAPPDATA%\Programs\omo`) and pin it, or reinstall OmO so its installer creates the icons again.
-4. Run `node tools/install.mjs --uninstall` again. With no retargeted icon left, it removes the mods.
-
-## 한국어 요약
-
-보통은 `node tools/install.mjs --uninstall` 하나로 아이콘을 되돌리고 모드를 지워요. 아이콘만 되돌릴 때는 `node tools/shortcuts.mjs restore --backup-dir <백업 폴더>`를 써요.
-`ICONS_STILL_RETARGETED`가 나오면 백업 기록이 없는 거라서, 다른 곳의 백업으로 되돌리거나 OmO 아이콘을 새로 만든 뒤 다시 `--uninstall`을 실행해요.
+The macOS edition never changes OmO's bundle or icons. To run without mods, open `/Applications/OmO.app` directly, hold Shift, or pass `--safe`. To go back to an older mod version, check out that commit in the source repository and run `node ~/.omo/app-mods/_loader/update.mjs` without `--pull` (or reinstall). Remove everything with [UNINSTALL.md](UNINSTALL.md).
