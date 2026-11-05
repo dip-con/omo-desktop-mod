@@ -1,168 +1,68 @@
-# Mod format
+# 모드 형식
 
-This document describes how a mod is laid out, how the loader treats it, and what a mod may
-touch. It is written for the mod author. Paths are the macOS ones: mods home `~/.omo/app-mods`,
-state directory `~/Library/Application Support/omo-app-mods` (override: `LOADER_STATE_DIR`).
+모드는 `~/.omo/app-mods/<id>/` 폴더 하나예요. 폴더 이름이 곧 `id`예요. `_`나 `.`로 시작하는 폴더는 모드로 보지 않아요.
 
-## 1. mod.json
-
-A mod is one folder `<modsRoot>/<id>/` with a `mod.json` at its top. The folder name must equal
-`id`. `modsRoot` is the parent of the `_loader` folder in an installed copy (`MODS_HOME`), and
-`REPO/mods` when the loader runs from the repository.
+## mod.json
 
 ```json
-{
-  "id": "sample",
-  "name": "Sample",
-  "nameKo": "프로필",
-  "descriptionKo": "역할별 모델 프로필을 고르고 고치는 화면",
-  "version": "0.1.0",
-  "enabled": true,
-  "order": 10,
+{ "id": "ko", "name": "Korean UI", "nameKo": "한글 화면", "description": "앱 화면 글자를 한글로 바꿔요",
+  "version": "0.3.0", "enabled": true, "locked": false, "order": 20,
   "entry": { "page": "page.js", "css": "page.css", "host": "host.mjs" },
-  "contributes": { "settingsPage": { "id": "sample", "label": "프로필" } },
-  "update": { "repo": "/Users/me/src/sample-mod", "subdir": "mods/sample" },
-  "anchors": [
-    { "selector": "#root", "route": "*" },
-    { "selector": "[data-settings-nav-path]", "route": "/settings/" }
-  ]
-}
+  "settingsPage": { "id": "mods", "label": "모드" },
+  "anchors": [ { "selector": "#root", "route": "*" } ],
+  "source": { "repo": "dip-con/omo-desktop-ko-translation", "path": "mods/ko", "ref": "main" } }
 ```
 
-| Field | Type | Rule |
-|---|---|---|
-| `id` | string | lowercase letters, digits and dashes; equals the folder name |
-| `name`, `nameKo`, `version` | string | non-empty |
-| `descriptionKo` | string | optional; the one-line Korean description shown in Settings > 모드 |
-| `enabled` | boolean | `false` means never injected (reason `DISABLED`); see section 2 for when a change takes effect |
-| `locked` | boolean | optional, default `false`; a locked mod is always injected whatever `enabled` says, and `setEnabled` refuses it (`LOCKED`). Only the built-in `modmgr` sets it |
-| `order` | integer | injection order; ties break by `id` |
-| `entry.page` | string | relative path inside the mod folder; required |
-| `entry.css` | string | optional, relative path inside the mod folder |
-| `entry.host` | string | optional, relative path inside the mod folder; an ES module |
-| `contributes.settingsPage` | object | optional; `{id, label}` |
-| `testedBuilds` | string[] | optional; informational only, it never changes whether the mod attaches |
-| `update` | object | optional; `{repo, subdir?}`, absolute repository path and the mod folder inside it. Used by the update check when the install manifest has no source for this mod (see [UPDATE.md](../UPDATE.md)) |
-| `anchors` | array | `{selector, route}`; the places where the mod attaches |
+| 필드 | 뜻 |
+| --- | --- |
+| `id`, `name`, `version` | 필수. `id`는 폴더 이름과 같아야 해요. |
+| `nameKo`, `description` | 선택. `nameKo`가 없으면 `name`을 보여 줘요. |
+| `enabled` | 꺼 두면 붙이지 않아요. 설정 > 모드의 스위치가 이 값을 바꿔요. |
+| `locked` | `true`면 끌 수 없어요 (`modmgr`). |
+| `order` | 붙이는 순서. 작은 값이 먼저예요. |
+| `entry.page` | 페이지 안 격리 world에서 도는 스크립트 |
+| `entry.css`, `entry.host` | 선택. 스타일, 그리고 Node 쪽 모듈 |
+| `settingsPage` | 선택. 설정 화면에 붙일 페이지 |
+| `anchors` | 이 선택자가 있고 경로가 맞을 때만 모드 루트를 보여 줘요. `route`는 `*` 또는 경로예요. |
+| `source` | 업데이트 기본 출처. `path`, `ref`는 선택이에요. |
 
-A path that leaves the mod folder (absolute, or containing `..`) is refused. A mod that fails
-the format check is skipped and reported with its reason; the other mods still load.
+모르는 필드가 있으면 그 모드는 거절돼요(`BAD_FORMAT`).
 
-### Comparison with a VS Code extension manifest
+## 페이지 스크립트
 
-| VS Code `package.json` | omo mod.json | Note |
-|---|---|---|
-| `name`, `displayName`, `version` | `id`, `name`/`nameKo`, `version` | `id` is also the folder name |
-| `main` / `browser` entry | `entry.page` (+ `entry.host`) | the page runs in an isolated world, not in the app's main world |
-| `activationEvents` | `anchors` + `route` | a mod runs where its anchors exist, not on a global event |
-| `contributes` | `contributes.settingsPage` | only the settings page is a contribution point today |
-| `engines.vscode` | `anchors` | compatibility is decided on screen by the anchors, not by a version range |
-| `enabledApiProposals` | none | no proposals; the bridge is the only extra API |
+`page.js`는 `omoMods` 객체를 받아요.
 
-If you want to propose an "extension mode" to a developer, the mapping above is the starting
-point.
+- `omoMods.call(method, args)`: host 모듈을 불러요. Promise를 돌려주고, 30초가 지나면 실패해요.
+- `omoMods.onTrusted(el, fn)`: 사용자가 실제로 일으킨 이벤트에만 반응해요.
+- `omoMods.expose(obj)`: 다른 곳에서 볼 수 있게 `window.omoMods.exposed[id]`에 올려요.
+- `omoMods.reload()`: 모드를 다시 읽고 화면을 새로 고쳐요.
 
-## 2. Lifecycle
+모드가 그리는 요소에는 `data-omo-mod-root="<id>"`를 달아요. 경로가 바뀔 때 로더가 anchors를 다시 보고 이 요소를 보이거나 숨겨요.
 
-1. **Discover.** `loader/mods.mjs` reads `<modsRoot>/*/mod.json` (skipping `_loader`) and sorts by
-   `order`, then `id`. Broken entries go to the notice with a reason.
-2. **Anchor check.** The loader fingerprints the installed app (`loader/fingerprint.mjs`, reading
-   `/Applications/OmO.app/Contents/Resources`) for the state file and logs. For each mod and each anchor that applies to the current route, the loader checks
-   that the anchor element is present (waiting up to 5 seconds per route change).
-   - An anchor missing: that mod alone is switched off, reason `ANCHOR_MISSING`.
-   - All anchors present: attached, no reason. The build key plays no part.
-3. **Inject.** The loader attaches to the main window only (`mainTarget` in `docs/app-facts.json`,
-   `omo://app/`), and runs one bundle in the isolated world `omo-mods`. The bundle contains the
-   route and evaluation functions copied from `mods.mjs`, the page runtime, and each mod's page
-   script. The main world of the app does not receive mod code and gets no globals. A host call that fails before the host loads (no `entry.host`, or the module cannot load) switches that mod off with reason `HOST_FAILED` in `status --json`.
-4. **Re-inject.** On every document load and every in-page route change the loader runs the
-   version and anchor checks again and shows or hides each mod's own roots. A mod's page script
-   runs once per document, not once per route.
-5. **Watchdog.** An uncaught error in mod code, or an empty `#root` after load, sends
-   `__watchdog`. The loader removes the bundle and reloads the page without mods, at most three
-   times per target. After that it only shows the notice (reason `WATCHDOG`).
-6. **Switch on or off.** `enabled` is read when the mods are resolved: at launch and on every
-   `__reload`. Settings > 모드 writes it through `setEnabled`. [지금 새로 고침] asks first, then sends
-   `__reload`: the loader reads the mods again, swaps the registered bundle in every attached window,
-   and reloads those windows. Without it, the change applies at the next launch.
-7. **Exit.** The helper watches the browser socket. When the socket closes, it ends with code 0
-   (`OMO_GONE`) if the app process is gone, or code 5 (`ENDPOINT_LOST`) if the app is still
-   running but its debug endpoint does not answer. It reconnects at most once per poll interval
-   while the app is alive. It never closes or signals the app.
+## host 모듈
 
-## 3. Bridge API
-
-Page script (isolated world), called as `function (omoMods) { ... }`:
-
-| Member | Behaviour |
-|---|---|
-| `omoMods.call(method, args)` | Promise. Calls the mod's host module. Rejects with `BRIDGE_TIMEOUT` after 30 s; a banner `bridge-lost` is shown. |
-| `omoMods.onTrusted(element, fn)` | runs `fn` only on a real user click (`event.isTrusted`) |
-| `omoMods.omoProfile` | the `OMO_PROFILE` value seen by the loader, or `null`; read only |
-| `omoMods.forMod(id)` | returns the same `call` and `onTrusted`, bound to a mod id |
-
-Host module (`entry.host`): an ES module that exports `handle(method, args)`. A resolved value is
-returned to the page as `{ok: true, value}`; a throw is returned as `{ok: false, error}`.
-Method names match `[A-Za-z][A-Za-z0-9_.]{0,63}`. `args` is an array whose JSON is at most 64 KB.
-Requests are refused for an unknown mod id, a malformed body, or a reserved control name
-(`__plan`, `__fail`, `__watchdog`, `__reload`), which only the page runtime may send.
-`__reload` takes no host: the loader resolves the mods again, replaces the registered bundle in each
-attached window and reloads it.
-
-modmgr host methods (Settings > 모드):
-
-| Method | Behaviour |
-|---|---|
-| `list()` | `{ok, mods}`: one row per installed mod with `id`, `nameKo`, `descriptionKo`, `enabled`, `locked`, a Korean `status` (`붙음`, `꺼짐`, `못 붙음`, ...) from the loader's last `state.json`, and `expected` (sha256 of its `mod.json`) |
-| `setEnabled({id, on, expected})` | changes only the `enabled` value of one unlocked `mod.json`, after a backup to `<mods-home>/_loader/backups/<time>/<id>-mod.json`. Refusals: `LOCKED`, `STALE` (the file changed since `list`), `UNKNOWN_MOD`, `BAD_ARGS`, `BAD_FORMAT` |
-| `checkUpdates()` | `{ok, items}`: per installed id, `installedHash`, `sourceHash`, `changed`, `error` (`NO_SOURCE`, `SOURCE_MISSING`, `READ_FAILED`). Refusal `NO_MANIFEST` |
-| `applyUpdates({ids, pull})` | copies the changed sources in (optionally `git pull` first); `{ok, applied, skipped, errors}`. Refusals `NO_MANIFEST`, `BAD_ARGS` |
-
-Mod DOM rules: every element the mod creates lives under `[data-omo-mod-root="<id>"]`, and its
-style carries `data-omo-mod="<id>"`. The loader hides these when the anchors are missing. Mods do
-not move, replace or clone the app's nodes.
-
-## 4. Security model
-
-- **Debug port.** The app opens a Chromium remote-debugging endpoint only when it is launched
-  through `OmO Mods.app` (the loader). The loader passes `--remote-debugging-address=127.0.0.1` and an
-  ephemeral port in `OMO_DESKTOP_REMOTE_DEBUGGING_PORT`. The port is not in the normal launch
-  environment.
-- **Binding only.** The loader listens on loopback. It does not expose an HTTP server of its
-  own: the only traffic is the loader's outbound CDP connection to the app's own endpoint.
-- **No HTTP.** The loader serves nothing. Its only inbound channel is the page-to-loader binding
-  `__omoModsCall`, which exists only in the `omo-mods` isolated world.
-- **Home guard.** The loader refuses to start the app (exit 4, no spawn) if the process home is
-  redirected away from the real account folder, or if an agent-directory variable points somewhere
-  else.
-- **Files.** The loader never writes to the app directory. Mods write to the app home only through
-  their own host module; a mod host writes only `omo.jsonc` role rows and
-  `runtime/app-mods/**`, with a backup, a journal and an optimistic-hash check before each write.
-- **Single instance.** A lock file holds the helper's pid and start time. A stale lock is taken
-  over; a live one makes a second helper exit 0 without launching.
-
-## 5. Installed layout
-
-```
-<mods-home>/
-  _loader/       loader code, update.mjs, config.json, app-facts.json, install-manifest.json, backups/
-  modmgr/        mod.json (locked), page.js, page.css, host.mjs, host/
-  sample/        mod.json, page.js, page.css, host.mjs
-  ko/            mod.json, page.js
+```js
+export async function handle(method, args, ctx) { /* ... */ }
 ```
 
-`tools/install.mjs` writes this layout under `~/.omo/app-mods` and a launcher `~/Applications/OmO Mods.app`
-(skip it with `--no-launcher`). The launcher runs `node _loader/boot.mjs /Applications/OmO.app` and passes its
-arguments on, so `--safe` works. The app bundle and its icon are never touched. `--uninstall` removes only the
-files in the manifest and our launcher. Loader state and logs live in `~/Library/Application Support/omo-app-mods`.
+`ctx`는 `{modId, modDir, stateDir, modsHome}`이에요. 기록할 파일은 `ctx.stateDir`에 쓰세요. [지금 새로 고침]을 누르면 host 모듈도 새로 import돼요.
 
-## 6. After an app update
+## 거절 이유
 
-No build has to be recorded. The anchors decide, so a mod keeps working while its anchors exist.
+`state.json`의 `mods[].reason`에 남아요: `BAD_FORMAT`, `BAD_FILES`, `DISABLED`, `ANCHOR_MISSING`, `MOD_ERROR`, `HOST_FAILED`, `WATCHDOG`.
 
-1. Update OmO as usual. The loader never writes into `/Applications/OmO.app`, and `OmO Mods.app` keeps working.
-2. Run `node loader/check.mjs status --json` to see which mods attached and why.
-3. A mod switched off with `ANCHOR_MISSING` needs new anchors (or a new mod version). Fix `anchors` in its
-   repository and bring it in with [UPDATE.md](../UPDATE.md).
-4. `node loader/check.mjs --record-build` still exists if you want to note a QA'd build in `testedBuilds`. It is
-   optional and changes nothing about attaching.
+## modmgr host 메서드
+
+| 메서드 | 돌려주는 값 |
+| --- | --- |
+| `list()` | `{ok, mods:[{id,name,nameKo,description,version,enabled,locked,status,reasonKo,expected}]}` |
+| `setEnabled({id,on,expected})` | `{ok,id,enabled,changed,expected}`. 거절: `BAD_ARGS`, `UNKNOWN_MOD`, `STALE`, `LOCKED`, `BAD_FORMAT` |
+| `checkUpdates()` | `{ok, items}`. 설치 기록이 없으면 `NO_INSTALL_RECORD` |
+| `applyUpdates({ids})` | `{ok, applied, skipped, errors}` |
+
+`expected`는 `mod.json`의 sha256이에요. 그 사이 파일이 바뀌었으면 `STALE`로 거절해요.
+
+## English
+
+A mod is a folder with `mod.json` (fields above; unknown fields are refused), a `page.js` run in an isolated world with
+`omoMods.call/onTrusted/expose/reload`, and optional `page.css` and `host.mjs` exporting `handle(method, args, ctx)`.

@@ -2,8 +2,8 @@
   "id": "modmgr",
   "name": "Mods",
   "nameKo": "모드 관리",
-  "descriptionKo": "모드를 켜고 끄는 화면",
-  "version": "1.0.0",
+  "description": "모드를 켜고 끄고 업데이트하는 화면",
+  "version": "2.0.0",
   "enabled": true,
   "locked": true,
   "order": 0,
@@ -12,24 +12,19 @@
     "css": "page.css",
     "host": "host.mjs"
   },
-  "contributes": {
-    "settingsPage": {
-      "id": "mods",
-      "label": "모드"
-    }
+  "settingsPage": {
+    "id": "mods",
+    "label": "모드"
   },
   "anchors": [
     {
       "selector": "#root",
       "route": "*"
-    },
-    {
-      "selector": "[data-settings-nav-path]",
-      "route": "/settings/"
-    },
-    {
-      "selector": "html > body > div#root > div:nth-of-type(1) > div > div > div > main > div",
-      "route": "/settings/"
     }
-  ]
+  ],
+  "source": {
+    "repo": "dip-con/omo-desktop-mod",
+    "path": "mods/modmgr",
+    "ref": "main"
+  }
 }

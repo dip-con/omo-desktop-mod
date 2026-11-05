@@ -1,4 +1,5 @@
-/* Mods page. Every value traces to the app's own CSS variables through the same token set as the other settings pages: the settings surface (rounded-xl = --radius-xl, border-border/60, bg-card/40, --font-sans).
+/* 설정 > 모드. Every value traces to the app's own CSS variables (the same token set as the app's settings pages):
+   colours, --spacing, --radius-xl / --control-radius, --text-*, --font-weight-*, --duration-basic / --ease-standard.
    The system colours after each app variable are fallbacks only, so the overlay stays opaque and legible if the app
    renames a variable. */
 
@@ -12,18 +13,16 @@
   --mm-raised: var(--popover, Canvas);
   --mm-raised-fg: var(--popover-foreground, CanvasText);
   --mm-wash: var(--accent, color-mix(in oklab, CanvasText 6%, transparent));
-  /* Pressed: one step past the hover wash, toward the text colour (darker in light, lighter in dark). */
   --mm-press: color-mix(in oklab, var(--mm-fg) 12%, var(--mm-wash));
   --mm-primary: var(--primary, AccentColor);
   --mm-primary-fg: var(--primary-foreground, AccentColorText);
+  --mm-primary-hover: color-mix(in oklab, var(--mm-primary) 86%, var(--mm-fg));
+  --mm-primary-press: color-mix(in oklab, var(--mm-primary) 72%, var(--mm-fg));
   --mm-ring: var(--ring, Highlight);
-  --mm-ok: var(--success, CanvasText);
-  --mm-warn: var(--warning, CanvasText);
-  --mm-danger: var(--destructive, CanvasText);
-  /* Status inks: the status colour pulled toward the text colour, so it passes AA as text in both themes. */
-  --mm-ok-ink: color-mix(in oklab, var(--mm-ok) 55%, var(--mm-fg));
-  --mm-warn-ink: color-mix(in oklab, var(--mm-warn) 70%, var(--mm-fg));
-  --mm-danger-ink: color-mix(in oklab, var(--mm-danger) 72%, var(--mm-fg));
+  /* Status inks: the app's status colour pulled toward the text colour, so each passes AA as text in both themes. */
+  --mm-ok-ink: color-mix(in oklab, var(--success, CanvasText) 55%, var(--mm-fg));
+  --mm-warn-ink: color-mix(in oklab, var(--warning, CanvasText) 70%, var(--mm-fg));
+  --mm-danger-ink: color-mix(in oklab, var(--destructive, CanvasText) 72%, var(--mm-fg));
   --mm-radius: var(--radius-xl, 14px);
   --mm-radius-control: var(--control-radius, .5rem);
   --mm-space: var(--spacing, .25rem);
@@ -35,17 +34,15 @@
   --mm-topbar: var(--workspace-topbar-height, 52px);
   --mm-dur: var(--duration-basic, .15s);
   --mm-ease: var(--ease-standard, ease);
+  --mm-shadow: var(--shadow-panel, 0 0 0 .5px rgb(0 0 0 / .06), 0 8px 24px rgb(0 0 0 / .09));
   --mm-target: calc(var(--mm-space) * 8);
   --mm-fs-small: var(--mm-text-xs);
   --mm-fs-title: var(--mm-text-base);
-  /* The app's panel shadow: black-based in both themes, so it never glows in dark. */
-  --mm-shadow: var(--shadow-panel, 0 0 0 .5px rgb(0 0 0 / .06), 0 8px 24px rgb(0 0 0 / .09));
   /* Switch: a 36 x 20 track with a 1 px edge and a 16 px thumb that travels 16 px. */
   --mm-track-w: calc(var(--mm-space) * 9);
   --mm-track-h: calc(var(--mm-space) * 5);
   --mm-thumb: calc(var(--mm-space) * 4);
   position: fixed;
-  /* One above the 프로필 page (30), so 모드 shows over a 프로필 page that is still open behind it. */
   z-index: 31;
   display: flex;
   flex-direction: column;
@@ -69,10 +66,7 @@
   box-sizing: border-box;
 }
 
-/* Text: Korean words wrap whole (keep-all on the root), paragraphs avoid a short last line, titles balance. */
-.mm-root p,
-.mm-root td,
-.mm-root th {
+.mm-root p {
   text-wrap: pretty;
 }
 
@@ -89,11 +83,10 @@
   }
 }
 
-/* Phone width: body 17 px, secondary text 15 px and titles 18 px (the iOS body and subheadline sizes). */
 @media (max-width: 639px) {
   .mm-root {
     --mm-fs-small: .9375rem;
-    --mm-fs-title: var(--mm-text-lg, 1.125rem);
+    --mm-fs-title: var(--text-lg, 1.125rem);
     font-size: 1.0625rem;
   }
 }
@@ -136,7 +129,7 @@
   display: flex;
   flex: none;
   align-items: center;
-  gap: calc(var(--mm-space) * 1);
+  gap: var(--mm-space);
   height: var(--mm-topbar);
   padding: 0 calc(var(--mm-space) * 3);
 }
@@ -171,13 +164,12 @@
 }
 
 .mm-title {
-  margin: 0 0 0 calc(var(--mm-space) * 1);
+  margin: 0 0 0 var(--mm-space);
   font-size: inherit;
   font-weight: var(--mm-medium);
 }
 
-/* No scrollbar strip: the gutter would sit on the right only and make the side margins uneven. The page still
-   scrolls by wheel, touch and keys. */
+/* No scrollbar strip: a gutter on the right only would make the side margins uneven. Wheel, touch and keys still scroll. */
 .mm-scroll {
   flex: 1;
   min-height: 0;
@@ -206,8 +198,8 @@
   }
 }
 
-/* Mod cards: one per row, the settings surface look; name and status on the first line, the description under them,
-   the switch at the trailing end. */
+/* Mod cards: one per row on the settings surface; name and status on the first line, the description under them, the
+   switch at the trailing end. */
 .mm-list {
   display: grid;
   gap: calc(var(--mm-space) * 3);
@@ -228,7 +220,7 @@
 .mm-card-main {
   display: flex;
   flex-direction: column;
-  gap: calc(var(--mm-space) * 1);
+  gap: var(--mm-space);
   min-width: 0;
 }
 
@@ -248,8 +240,8 @@
   overflow-wrap: anywhere;
 }
 
-/* Status as a short bracketed tag in its status ink. The brackets are drawn by CSS with empty alternative text, so
-   the text and the accessible name are the status alone. */
+/* Status as a short bracketed tag in its status ink. The brackets are drawn with empty alternative text, so the text
+   and the accessible name are the status alone. */
 .mm-chip {
   font-weight: var(--mm-medium);
   overflow-wrap: anywhere;
@@ -301,7 +293,7 @@
   justify-content: center;
   min-width: var(--mm-target);
   min-height: var(--mm-target);
-  padding: 0 calc(var(--mm-space) * 1);
+  padding: 0 var(--mm-space);
   border: 0;
   border-radius: var(--mm-radius-control);
   background: transparent;
@@ -348,15 +340,14 @@
 }
 
 .mm-switch[aria-checked="true"]:hover:not([aria-disabled="true"]) .mm-track {
-  background: color-mix(in oklab, var(--mm-primary) 86%, var(--mm-fg));
+  background: var(--mm-primary-hover);
 }
 
 .mm-switch[aria-checked="true"]:active:not([aria-disabled="true"]) .mm-track {
-  background: color-mix(in oklab, var(--mm-primary) 72%, var(--mm-fg));
+  background: var(--mm-primary-press);
 }
 
-/* While one switch writes, every switch waits. The track keeps its full-contrast edge (3:1 or more against the card in
-   both states and themes); the unavailable cue is a faded thumb, no hover change and the not-allowed cursor. */
+/* While one switch writes, every switch waits: the track keeps its full-contrast edge, the thumb fades, no hover change. */
 .mm-switch[aria-disabled="true"] {
   cursor: not-allowed;
 }
@@ -380,33 +371,24 @@
 }
 
 /* Lines that say what happened: a card's result, an error, a hint. */
-.mm-msg,
-.mm-error {
+.mm-line {
   display: flex;
   gap: calc(var(--mm-space) * 1.5);
   align-items: flex-start;
   margin: 0;
-  word-break: keep-all;
 }
 
-.mm-msg > .mm-icon,
-.mm-error > .mm-icon {
+.mm-line > .mm-icon {
   margin-top: .2em;
 }
 
-.mm-error,
-.mm-msg[data-tone="danger"] {
+.mm-line[data-tone="danger"] {
   color: var(--mm-danger-ink);
-}
-
-.mm-msg[data-tone="info"] {
-  color: var(--mm-fg);
 }
 
 .mm-hint {
   margin: 0;
   color: var(--mm-muted);
-  word-break: keep-all;
 }
 
 /* The reload notice: one neutral wash, the text, and the page's one prominent button at the trailing end. */
@@ -418,7 +400,6 @@
   padding: calc(var(--mm-space) * 3) calc(var(--mm-space) * 4);
   border-radius: var(--mm-radius);
   background: var(--mm-wash);
-  word-break: keep-all;
 }
 
 .mm-notice-text {
@@ -428,8 +409,8 @@
   font-weight: var(--mm-medium);
 }
 
-/* Update card: the settings surface again, in one column: the title and its line, the rows of the last check, apply
-   errors no row carries, and the buttons at the trailing end. */
+/* Update card: the settings surface in one column: title and line, the rows of the last check, errors no row carries,
+   the buttons at the trailing end. */
 .mm-update {
   grid-template-columns: minmax(0, 1fr);
 }
@@ -442,7 +423,6 @@
   list-style: none;
 }
 
-/* One row per mod: name, id and status on one line, wrapping when the status is long; hairlines between rows. */
 .mm-update-row {
   display: flex;
   flex-wrap: wrap;
@@ -466,7 +446,7 @@
 
 .mm-update-errors {
   display: grid;
-  gap: calc(var(--mm-space) * 1);
+  gap: var(--mm-space);
 }
 
 .mm-update-actions {
@@ -487,7 +467,6 @@
   visibility: hidden;
 }
 
-/* Controls. */
 .mm-btn {
   display: inline-flex;
   align-items: center;
@@ -506,17 +485,16 @@
   transition: background-color var(--mm-dur) var(--mm-ease), transform var(--mm-dur) var(--mm-ease);
 }
 
-.mm-btn:hover:not(:disabled):not([aria-disabled="true"]) {
+.mm-btn:hover:not([aria-disabled="true"]) {
   background: var(--mm-wash);
 }
 
-.mm-btn:active:not(:disabled):not([aria-disabled="true"]) {
+.mm-btn:active:not([aria-disabled="true"]) {
   background: var(--mm-press);
   transform: scale(.97);
 }
 
-/* Disabled, or waiting (aria-disabled): no fill and the muted ink, still AA-legible in both themes. */
-.mm-btn:disabled,
+/* Waiting (aria-disabled): no fill and the muted ink, still AA-legible in both themes. */
 .mm-btn[aria-disabled="true"] {
   border-color: var(--mm-surface-line);
   background: transparent;
@@ -534,21 +512,21 @@
   color: var(--mm-primary-fg);
 }
 
-.mm-btn-primary:disabled,
 .mm-btn-primary[aria-disabled="true"] {
   border-color: transparent;
   background: var(--mm-wash);
 }
 
-.mm-btn-primary:hover:not(:disabled):not([aria-disabled="true"]) {
-  background: color-mix(in oklab, var(--mm-primary) 86%, var(--mm-fg));
+.mm-btn-primary:hover:not([aria-disabled="true"]) {
+  background: var(--mm-primary-hover);
 }
 
-.mm-btn-primary:active:not(:disabled):not([aria-disabled="true"]) {
-  background: color-mix(in oklab, var(--mm-primary) 72%, var(--mm-fg));
+.mm-btn-primary:active:not([aria-disabled="true"]) {
+  background: var(--mm-primary-press);
 }
 
-/* Confirm dialog: a scrim over our page only, the raised dialog centred in it. */
+/* Confirm dialog: a scrim over our page only, the raised dialog centred in it. It is inserted at its start values
+   (data-enter, dropped once committed) and transitions in from them. */
 .mm-scrim {
   position: absolute;
   inset: 0;
@@ -560,22 +538,13 @@
   transition: opacity var(--mm-dur) var(--mm-ease);
 }
 
-/* The dialog's two ends: it is inserted at the start values (data-enter, dropped once they are committed) and leaves
-   to them again (data-leave). Transitions run from the current values, so a leave during the entry turns back from
-   wherever the entry got to. Clicks pass through while it leaves. */
-.mm-scrim[data-enter],
-.mm-scrim[data-leave] {
+.mm-scrim[data-enter] {
   opacity: 0;
 }
 
-.mm-scrim[data-leave] {
-  pointer-events: none;
-}
-
-.mm-scrim[data-enter] .mm-dialog,
-.mm-scrim[data-leave] .mm-dialog {
+.mm-scrim[data-enter] .mm-dialog {
   opacity: 0;
-  transform: translateY(calc(var(--mm-space) * 1)) scale(.98);
+  transform: translateY(var(--mm-space)) scale(.98);
 }
 
 .mm-dialog {
@@ -591,7 +560,6 @@
   background: var(--mm-raised);
   color: var(--mm-raised-fg);
   box-shadow: var(--mm-shadow);
-  word-break: keep-all;
   outline: none;
   transition: opacity var(--mm-dur) var(--mm-ease), transform var(--mm-dur) var(--mm-ease);
 }
@@ -621,7 +589,6 @@
   gap: calc(var(--mm-space) * 3);
   padding: calc(var(--mm-space) * 10) calc(var(--mm-space) * 4);
   text-align: center;
-  word-break: keep-all;
 }
 
 .mm-failed-title {
@@ -645,13 +612,9 @@
   display: inline-block;
   max-width: 100%;
   height: .75em;
-  border-radius: calc(var(--mm-space) * 1);
+  border-radius: var(--mm-space);
   background: var(--mm-wash);
   vertical-align: middle;
-}
-
-.mm-skel-s {
-  width: 4em;
 }
 
 .mm-skel-m {
@@ -666,7 +629,7 @@
   display: block;
   width: var(--mm-track-w);
   height: var(--mm-track-h);
-  margin: calc((var(--mm-target) - var(--mm-track-h)) / 2) calc(var(--mm-space) * 1);
+  margin: calc((var(--mm-target) - var(--mm-track-h)) / 2) var(--mm-space);
   border-radius: calc(var(--mm-track-h) / 2);
   background: var(--mm-wash);
 }
@@ -677,12 +640,11 @@
     transition: background-color var(--mm-dur) var(--mm-ease);
   }
 
-  .mm-scrim[data-enter] .mm-dialog,
-  .mm-scrim[data-leave] .mm-dialog {
+  .mm-scrim[data-enter] .mm-dialog {
     transform: none;
   }
 
-  .mm-btn:active:not(:disabled):not([aria-disabled="true"]) {
+  .mm-btn:active:not([aria-disabled="true"]) {
     transform: none;
   }
 }

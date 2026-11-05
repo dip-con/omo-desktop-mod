@@ -1,12 +1,13 @@
 {
-  "name": "omo-app-mods",
+  "name": "omo-mods",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
+  "license": "MIT",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --import ./test/helpers/refuse-live-writes.mjs --test --test-isolation=none test/*.test.mjs",
-    "test:local": "node --import ./test/helpers/refuse-live-writes.mjs --test --test-isolation=none test-local/*.test.mjs"
+    "test": "node --test \"test/*.test.mjs\""
   }
 }
